@@ -1,0 +1,265 @@
+// Corgi Investment — Prisma schema
+// Money: BigInt cents. Units/shares: Decimal(20,6). See DECISIONS.md.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String
+  fullName      String?
+  role          Role     @default(INVESTOR)
+  createdAt     DateTime @default(now())
+  account       Account?
+}
+
+enum Role {
+  INVESTOR
+  ADVISER
+}
+
+model Account {
+  id              String        @id @default(uuid())
+  userId          String        @unique
+  user            User          @relation(fields: [userId], references: [id])
+  kycStatus       KycStatus     @default(PENDING)
+  personaInquiryId String?
+  stripeVerificationSessionId String?
+  status          AccountStatus @default(INACTIVE)
+  // Plaid bank link (access token stored AES-256 encrypted, never plaintext).
+  plaidAccessToken String?
+  plaidItemId      String?
+  plaidAccountId   String?
+  bankAccountLast4 String?
+  bankName         String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  ledgerEntries   LedgerEntry[]
+  positions       Position[]
+  orders          Order[]
+  valuations      Valuation[]
+  deposits        Deposit[]
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AccountStatus {
+  INACTIVE
+  ACTIVE
+  SUSPENDED
+}
+
+model LedgerEntry {
+  id            String      @id @default(uuid())
+  accountId     String
+  account       Account     @relation(fields: [accountId], references: [id])
+  type          EntryType
+  amount        BigInt
+  currency      String      @default("USD")
+  assetSymbol   String?
+  units         Decimal?    @db.Decimal(20, 6)
+  description   String
+  referenceId   String?
+  referenceType String?
+  effectiveDate DateTime
+  bookingDate   DateTime    @default(now())
+  createdAt     DateTime    @default(now())
+  metadata      Json?
+
+  @@index([accountId, effectiveDate])
+  @@index([referenceId])
+}
+
+enum EntryType {
+  CASH_DEPOSIT
+  CASH_DEPOSIT_RETURN
+  CASH_WITHDRAWAL
+  TRADE_BUY_CASH
+  TRADE_BUY_UNITS
+  TRADE_SELL_CASH
+  TRADE_SELL_UNITS
+  DIVIDEND_CASH
+  FEE
+  CORRECTION_REVERSAL
+  CORRECTION_REBOOK
+}
+
+model Position {
+  id          String   @id @default(uuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id])
+  symbol      String
+  units       Decimal  @db.Decimal(20, 6)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  taxLots     TaxLot[]
+
+  @@unique([accountId, symbol])
+}
+
+model TaxLot {
+  id             String    @id @default(uuid())
+  positionId     String
+  position       Position  @relation(fields: [positionId], references: [id])
+  symbol         String
+  units          Decimal   @db.Decimal(20, 6)
+  remainingUnits Decimal   @db.Decimal(20, 6)
+  costBasisCents BigInt
+  openedAt       DateTime
+  closedAt       DateTime?
+  createdAt      DateTime  @default(now())
+}
+
+model Order {
+  id           String      @id @default(uuid())
+  accountId    String
+  account      Account     @relation(fields: [accountId], references: [id])
+  alpacaOrderId String?    @unique
+  symbol       String
+  side         OrderSide
+  type         OrderType   @default(MARKET)
+  status       OrderStatus @default(PENDING)
+  requestedUnits Decimal?  @db.Decimal(20, 6)
+  filledUnits    Decimal?  @db.Decimal(20, 6)
+  filledAvgPriceCents BigInt?
+  submittedAt  DateTime    @default(now())
+  filledAt     DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderType {
+  MARKET
+  LIMIT
+}
+
+enum OrderStatus {
+  PENDING
+  SUBMITTED
+  PARTIALLY_FILLED
+  FILLED
+  CANCELLED
+  REJECTED
+}
+
+model Valuation {
+  id                  String   @id @default(uuid())
+  accountId           String
+  account             Account  @relation(fields: [accountId], references: [id])
+  valuationDate       DateTime
+  totalValueCents     BigInt
+  cashCents           BigInt
+  investedValueCents  BigInt
+  returnPct           Decimal  @db.Decimal(10, 6)
+  twrPct              Decimal  @db.Decimal(10, 6)
+  isRestated          Boolean  @default(false)
+  originalValueCents  BigInt?
+  originalTwrPct      Decimal? @db.Decimal(10, 6)
+  createdAt           DateTime @default(now())
+
+  @@unique([accountId, valuationDate, isRestated])
+  @@index([accountId, valuationDate])
+}
+
+model ReconciliationBreak {
+  id            String      @id @default(uuid())
+  breakDate     DateTime
+  symbol        String?
+  breakType     BreakType
+  ledgerValue   Decimal?    @db.Decimal(20, 6)
+  custodianValue Decimal?   @db.Decimal(20, 6)
+  difference    Decimal?    @db.Decimal(20, 6)
+  status        BreakStatus @default(OPEN)
+  resolvedAt    DateTime?
+  createdAt     DateTime    @default(now())
+  agingDays     Int         @default(0)
+}
+
+enum BreakType {
+  MISSING_IN_LEDGER
+  MISSING_IN_CUSTODIAN
+  AMOUNT_MISMATCH
+  PRICE_MISMATCH
+}
+
+enum BreakStatus {
+  OPEN
+  RESOLVED
+  IGNORED
+}
+
+model ApprovalQueue {
+  id            String         @id @default(uuid())
+  initiatorId   String
+  type          ApprovalType
+  payload       Json
+  status        ApprovalStatus @default(PENDING)
+  approverId    String?
+  approvedAt    DateTime?
+  rejectedAt    DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+enum ApprovalType {
+  TRADE
+  WITHDRAWAL
+  REBALANCE
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Deposit {
+  id              String        @id @default(uuid())
+  accountId       String
+  account         Account       @relation(fields: [accountId], references: [id])
+  amountCents     BigInt
+  status          DepositStatus @default(PENDING)
+  plaidItemId     String?
+  settlementDate  DateTime
+  settledAt       DateTime?
+  returnedAt      DateTime?
+  returnReason    String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([accountId, status])
+}
+
+enum DepositStatus {
+  PENDING
+  SETTLED
+  RETURNED
+}
+
+model MarketPrice {
+  id        String   @id @default(uuid())
+  symbol    String
+  date      DateTime
+  closePriceCents BigInt
+  isStale   Boolean  @default(false)
+  source    String
+  createdAt DateTime @default(now())
+
+  @@unique([symbol, date])
+}

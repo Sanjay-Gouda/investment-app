@@ -1,0 +1,126 @@
+'use client';
+
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { apiClient, TOKEN_KEY } from './api-client';
+
+export type Role = 'INVESTOR' | 'ADVISER';
+export type KycStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  fullName?: string | null;
+  role: Role;
+}
+
+export interface AuthAccount {
+  id: string;
+  kycStatus: KycStatus;
+  status: string;
+}
+
+interface AuthResponse {
+  token: string;
+  user: AuthUser;
+  account: AuthAccount;
+}
+
+interface AuthContextValue {
+  user: AuthUser | null;
+  account: AuthAccount | null;
+  token: string | null;
+  loading: boolean;
+  isAuthenticated: boolean;
+  isKYCApproved: boolean;
+  login: (email: string, password: string) => Promise<AuthResponse>;
+  register: (email: string, password: string, fullName: string) => Promise<AuthResponse>;
+  logout: () => void;
+  refresh: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [account, setAccount] = useState<AuthAccount | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  function persist(res: AuthResponse) {
+    window.localStorage.setItem(TOKEN_KEY, res.token);
+    setToken(res.token);
+    setUser(res.user);
+    setAccount(res.account);
+  }
+
+  // Hydrate from a stored token on first load.
+  useEffect(() => {
+    const stored = typeof window !== 'undefined' ? window.localStorage.getItem(TOKEN_KEY) : null;
+    if (!stored) {
+      setLoading(false);
+      return;
+    }
+    setToken(stored);
+    apiClient
+      .get('/auth/me')
+      .then(({ data }) => {
+        setUser(data.user);
+        setAccount(data.account);
+      })
+      .catch(() => {
+        window.localStorage.removeItem(TOKEN_KEY);
+        setToken(null);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const login = async (email: string, password: string) => {
+    const { data } = await apiClient.post<AuthResponse>('/auth/login', { email, password });
+    persist(data);
+    return data;
+  };
+
+  const register = async (email: string, password: string, fullName: string) => {
+    const { data } = await apiClient.post<AuthResponse>('/auth/register', {
+      email,
+      password,
+      fullName,
+    });
+    persist(data);
+    return data;
+  };
+
+  const logout = () => {
+    window.localStorage.removeItem(TOKEN_KEY);
+    setToken(null);
+    setUser(null);
+    setAccount(null);
+  };
+
+  const refresh = async () => {
+    const { data } = await apiClient.get('/auth/me');
+    setUser(data.user);
+    setAccount(data.account);
+  };
+
+  const value: AuthContextValue = {
+    user,
+    account,
+    token,
+    loading,
+    isAuthenticated: !!token && !!user,
+    isKYCApproved: account?.kycStatus === 'APPROVED',
+    login,
+    register,
+    logout,
+    refresh,
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within an AuthProvider');
+  return ctx;
+}

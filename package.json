@@ -1,0 +1,24 @@
+{
+  "name": "corgi-investment",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Corgi Investment App — Track 2 work trial (monorepo skeleton)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev -w @corgi/api\" \"npm run dev -w @corgi/web\"",
+    "build": "npm run build -w @corgi/shared && npm run build -w @corgi/api && npm run build -w @corgi/web",
+    "db:migrate": "npm run db:migrate -w @corgi/api",
+    "db:seed": "npm run db:seed -w @corgi/api",
+    "db:generate": "npm run db:generate -w @corgi/api",
+    "typecheck": "npm run typecheck -w @corgi/shared && npm run typecheck -w @corgi/api && npm run typecheck -w @corgi/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
