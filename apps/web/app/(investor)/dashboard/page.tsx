@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth-context';
 interface Position {
   symbol: string;
   units: string;
+  currentPriceCents: string;
   currentValueCents: string;
   unrealizedGainPct: string;
 }
@@ -26,16 +27,28 @@ interface MyPortfolio {
   totalValueCents: string;
   orders: Order[];
 }
-
-function usd(cents: string | number): string {
-  return `$${(Number(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+interface Valuation {
+  valuationDate: string;
 }
+interface HistoryPoint {
+  date: string;
+  totalValueCents: number;
+}
+
+const usd = (cents: string | number) =>
+  `$${(Number(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const pctOf = (part: string | number, whole: string | number) => {
+  const w = Number(whole);
+  return w > 0 ? `${((Number(part) / w) * 100).toFixed(1)}%` : '—';
+};
 
 export default function DashboardPage() {
   const router = useRouter();
   const { user, loading, isAuthenticated, logout } = useAuth();
   const [data, setData] = useState<MyPortfolio | null>(null);
   const [pendingCents, setPendingCents] = useState('0');
+  const [asOf, setAsOf] = useState<string | null>(null);
+  const [history, setHistory] = useState<HistoryPoint[]>([]);
 
   useEffect(() => {
     if (!loading && !isAuthenticated) router.replace('/login');
@@ -43,17 +56,16 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    // Degrade gracefully: on any API failure, render empty state (never hang).
     apiClient
       .get('/portfolio/my')
       .then(({ data }) => setData(data))
-      .catch(() =>
-        setData({ portfolioType: null, positions: [], cashBalanceCents: '0', totalValueCents: '0', orders: [] }),
-      );
+      .catch(() => setData({ portfolioType: null, positions: [], cashBalanceCents: '0', totalValueCents: '0', orders: [] }));
+    apiClient.get('/plaid/balance').then(({ data }) => setPendingCents(data.pendingDepositsCents)).catch(() => setPendingCents('0'));
+    apiClient.get('/valuation/latest').then(({ data }) => setAsOf(data.valuation?.valuationDate ?? null)).catch(() => {});
     apiClient
-      .get('/plaid/balance')
-      .then(({ data }) => setPendingCents(data.pendingDepositsCents))
-      .catch(() => setPendingCents('0'));
+      .get('/valuation/history?days=30')
+      .then(({ data }) => setHistory(data.valuations ?? []))
+      .catch(() => setHistory([]));
   }, [isAuthenticated]);
 
   if (loading || !data) return <Centered>Loading…</Centered>;
@@ -61,12 +73,13 @@ export default function DashboardPage() {
   const cash = data.cashBalanceCents;
   const total = data.totalValueCents;
   const invested = String(Number(total) - Number(cash));
+  const anyStale = data.positions.some((p) => p.currentPriceCents === '0');
 
   return (
     <main className="mx-auto min-h-screen max-w-3xl px-6 py-10">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Dashboard</h1>
+          <h1 className="text-2xl font-semibold">Portfolio Overview</h1>
           <p className="mt-1 text-sm text-neutral-600">
             {user?.fullName ?? user?.email}
             {data.portfolioType ? ` · ${data.portfolioType}` : ''}
@@ -80,13 +93,19 @@ export default function DashboardPage() {
       <div className="mt-6 rounded-lg border p-5">
         <p className="text-xs text-neutral-500">Total Portfolio Value</p>
         <p className="text-3xl font-semibold">{usd(total)}</p>
+        <p className="mt-1 text-xs text-neutral-500">
+          {asOf ? `As of ${new Date(asOf).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} · market close` : 'Live estimate'}
+          {anyStale && ' · ⚠️ some prices delayed'}
+        </p>
       </div>
 
       <div className="mt-4 grid grid-cols-3 gap-4">
-        <Stat label="Cash" value={usd(cash)} />
-        <Stat label="Invested" value={usd(invested)} />
+        <Stat label="Cash" value={usd(cash)} sub={pctOf(cash, total)} />
+        <Stat label="Invested" value={usd(invested)} sub={pctOf(invested, total)} />
         <Stat label="Pending" value={usd(pendingCents)} />
       </div>
+
+      <Sparkline points={history} />
 
       <h2 className="mt-8 text-lg font-semibold">Positions</h2>
       {data.positions.length === 0 ? (
@@ -95,11 +114,23 @@ export default function DashboardPage() {
         </p>
       ) : (
         <table className="mt-3 w-full text-sm">
+          <thead>
+            <tr className="border-b text-left text-neutral-500">
+              <th className="py-1">Symbol</th>
+              <th>Units</th>
+              <th>Price</th>
+              <th>Value</th>
+              <th>Gain</th>
+            </tr>
+          </thead>
           <tbody>
             {data.positions.map((p) => (
               <tr key={p.symbol} className="border-b">
-                <td className="py-2 font-medium">{p.symbol}</td>
-                <td>{Number(p.units).toFixed(6)} units</td>
+                <td className="py-2 font-medium">
+                  {p.symbol} {p.currentPriceCents === '0' && <span title="price delayed/missing">⚠️</span>}
+                </td>
+                <td>{Number(p.units).toFixed(6)}</td>
+                <td>{usd(p.currentPriceCents)}</td>
                 <td>{usd(p.currentValueCents)}</td>
                 <td className={Number(p.unrealizedGainPct) >= 0 ? 'text-green-700' : 'text-red-700'}>
                   {Number(p.unrealizedGainPct) >= 0 ? '+' : ''}
@@ -111,7 +142,11 @@ export default function DashboardPage() {
         </table>
       )}
 
-      <div className="mt-8 flex items-center justify-between">
+      <p className="mt-4 text-xs text-neutral-400">
+        Prices via Alpaca IEX feed and may be delayed. Values are end-of-day snapshots.
+      </p>
+
+      <div className="mt-6 flex items-center justify-between">
         <h2 className="text-lg font-semibold">Recent orders</h2>
         <Link href="/orders" className="text-sm text-corgi hover:underline">View all</Link>
       </div>
@@ -124,9 +159,7 @@ export default function DashboardPage() {
               <td>{o.filledAvgPriceCents ? usd(o.filledAvgPriceCents) : '—'}</td>
             </tr>
           ))}
-          {data.orders.length === 0 && (
-            <tr><td className="py-2 text-neutral-500">No orders yet.</td></tr>
-          )}
+          {data.orders.length === 0 && <tr><td className="py-2 text-neutral-500">No orders yet.</td></tr>}
         </tbody>
       </table>
 
@@ -138,11 +171,38 @@ export default function DashboardPage() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-lg border p-4">
       <p className="text-xs text-neutral-500">{label}</p>
       <p className="mt-1 text-lg font-medium">{value}</p>
+      {sub && <p className="text-xs text-neutral-400">{sub}</p>}
+    </div>
+  );
+}
+
+/** Minimal inline-SVG line of daily total values (last 30 days). */
+function Sparkline({ points }: { points: HistoryPoint[] }) {
+  if (points.length < 2) return null;
+  const vals = points.map((p) => p.totalValueCents);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const range = max - min || 1;
+  const W = 600;
+  const H = 60;
+  const d = points
+    .map((p, i) => {
+      const x = (i / (points.length - 1)) * W;
+      const y = H - ((p.totalValueCents - min) / range) * H;
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  return (
+    <div className="mt-6">
+      <p className="mb-1 text-xs text-neutral-500">Value history (last {points.length} days)</p>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none" role="img" aria-label="Value history">
+        <path d={d} fill="none" stroke="#E8822A" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      </svg>
     </div>
   );
 }

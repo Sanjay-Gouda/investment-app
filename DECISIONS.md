@@ -255,3 +255,39 @@ This log is written as we go — not at hour 47.
 - Prices: live Alpaca data API, falling back to the MarketPrice table, then throw.
 
 ---
+
+## [DAY 2 - DAILY VALUATION JOB]
+
+### Prices
+- market-price.service fetches daily closes from Alpaca bars (feed=iex) and
+  stores immutable MarketPrice snapshots. To stay robust on weekends/holidays it
+  requests a 7-day window and takes the latest bar (not a single-day query).
+- Missing/failed price → mark last known stale, never crash (fetchAllActivePrices
+  returns {fetched, failed, stale}).
+
+### Valuation
+- value = Σ(units × price) + cash. Units are Decimal(20,6); price is BigInt
+  cents. The multiply is done in Decimal and converted to BigInt ONCE at the end
+  (`units.times(priceCents.toString()).toFixed(0)` → BigInt) — money and units
+  never mixed.
+- Snapshots are immutable and idempotent: upsert keyed by
+  (accountId, valuationDate@UTC-midnight, isRestated=false), so re-running a day
+  updates the same row.
+- A position with no price counts as 0 and flags hasStalePrice — the job never
+  crashes on a single bad symbol.
+- TWR is a placeholder 0 here (returnPct = twrPct = 0); Step 8 computes it.
+
+### Job
+- BullMQ worker on the `daily-valuation` queue; repeatable cron `0 16 * * 1-5`
+  tz America/New_York (weekdays 4pm ET — market closed weekends). No auto-retry
+  (tomorrow's run catches up). Manual trigger via POST /valuation/run (adviser)
+  and the test endpoints.
+
+### Real vs expected prices (note)
+- The brief's checks assume VTI ~$195-205 / BND ~$95-100, but the live Alpaca
+  IEX feed returns the REAL prices (VTI ~$374, BND ~$71). We use the real
+  prices; the math is correct, the brief's ranges were based on the fictional
+  seed. Likewise "accountsValued" is >1 because the dev DB has several ACTIVE
+  accounts from prior testing, not just the demo investor.
+
+---

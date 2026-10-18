@@ -26,10 +26,12 @@ import { ledgerRouter } from './routes/ledger.routes';
 import { kycRouter } from './routes/kyc.routes';
 import { plaidRouter } from './routes/plaid.routes';
 import { alpacaRouter } from './routes/alpaca.routes';
+import { valuationRouter } from './routes/valuation.routes';
 import { webhooksRouter } from './routes/webhooks.routes';
 import { testRouter } from './routes/test.routes';
 import { startAchSettlementWorker } from './jobs/ach-settlement.job';
 import { startOrderPolling } from './jobs/order-polling.job';
+import { startDailyValuationWorker } from './jobs/daily-valuation.job';
 
 // Make BigInt serializable so ledger/money fields survive res.json().
 // (Values are cents; the shared contract types them as strings over the wire.)
@@ -66,6 +68,7 @@ app.use('/reconciliation', reconciliationRouter);
 // Ledger is append-only: block PUT/PATCH/DELETE before the router.
 app.use('/ledger', preventLedgerMutation, ledgerRouter);
 app.use('/alpaca', alpacaRouter);
+app.use('/valuation', valuationRouter);
 app.use('/webhooks', webhooksRouter);
 
 // Dev-only helper routes (disabled in production inside the router).
@@ -105,6 +108,7 @@ const server = app.listen(PORT, () => {
 // Background workers. Resilient: log if Redis / Alpaca are unavailable.
 startAchSettlementWorker();
 startOrderPolling();
+startDailyValuationWorker();
 
 // Graceful shutdown
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

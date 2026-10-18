@@ -25,6 +25,14 @@ import {
   pollOpenOrders,
 } from '../services/alpaca.service';
 import { isPortfolioType } from '../services/portfolios';
+import {
+  runDailyValuation,
+  getLatestValuation,
+  getValuationHistory,
+  calculateAccountValuation,
+  storeValuation,
+} from '../services/valuation.service';
+import { fetchAndStorePrice, getLatestPrice as getStoredPrice } from '../services/market-price.service';
 
 /**
  * Dev-only helper routes for exercising the system without a UI or auth.
@@ -361,6 +369,133 @@ testRouter.get('/alpaca/positions', async (req: Request, res: Response) => {
 // --- POST /test/alpaca/check-fills -----------------------------------------
 testRouter.post('/alpaca/check-fills', async (_req: Request, res: Response) => {
   res.json(await pollOpenOrders());
+});
+
+// ===========================================================================
+// Valuation (Step 7)
+// ===========================================================================
+
+function startOfUtcDay(d: Date): Date {
+  const x = new Date(d);
+  x.setUTCHours(0, 0, 0, 0);
+  return x;
+}
+const usd = (cents: bigint | number | string) => `$${(Number(cents) / 100).toFixed(2)}`;
+
+// --- POST /test/valuation/run ---------------------------------------------
+testRouter.post('/valuation/run', async (_req: Request, res: Response) => {
+  res.json(await runDailyValuation());
+});
+
+// --- GET /test/valuation/latest?email= ------------------------------------
+testRouter.get('/valuation/latest', async (req: Request, res: Response) => {
+  const accountId = await accountIdByEmail(req.query.email as string | undefined);
+  const v = await getLatestValuation(accountId);
+  if (!v) {
+    res.json({ valuation: null, message: 'No valuation yet — run /test/valuation/run' });
+    return;
+  }
+  res.json({
+    totalValueCents: Number(v.totalValueCents),
+    totalValueUSD: usd(v.totalValueCents),
+    cashCents: Number(v.cashCents),
+    investedValueCents: Number(v.investedValueCents),
+    valuationDate: v.valuationDate.toISOString().slice(0, 10),
+  });
+});
+
+// --- GET /test/valuation/history?email=&days= -----------------------------
+testRouter.get('/valuation/history', async (req: Request, res: Response) => {
+  const accountId = await accountIdByEmail(req.query.email as string | undefined);
+  const days = req.query.days ? Number(req.query.days) : 30;
+  const start = new Date(Date.now() - days * 86_400_000);
+  const valuations = await getValuationHistory(accountId, start);
+  res.json({
+    valuations: valuations.map((v) => ({
+      date: v.valuationDate.toISOString().slice(0, 10),
+      totalValueCents: Number(v.totalValueCents),
+      totalValueUSD: usd(v.totalValueCents),
+      cashCents: Number(v.cashCents),
+      investedValueCents: Number(v.investedValueCents),
+      isRestated: v.isRestated,
+    })),
+  });
+});
+
+// --- POST /test/valuation/fetch-prices ------------------------------------
+testRouter.post('/valuation/fetch-prices', async (_req: Request, res: Response) => {
+  const out: Record<string, { priceCents: number; priceUSD: string } | { error: string }> = {};
+  for (const symbol of ['VTI', 'BND']) {
+    try {
+      const cents = await fetchAndStorePrice(symbol, new Date());
+      out[symbol] = { priceCents: Number(cents), priceUSD: usd(cents) };
+    } catch (err) {
+      out[symbol] = { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+  res.json(out);
+});
+
+// --- GET /test/valuation/prices?symbol= -----------------------------------
+testRouter.get('/valuation/prices', async (req: Request, res: Response) => {
+  const symbol = ((req.query.symbol as string) || 'VTI').toUpperCase();
+  const prices = await prisma.marketPrice.findMany({
+    where: { symbol },
+    orderBy: { date: 'desc' },
+    take: 7,
+  });
+  res.json({
+    symbol,
+    prices: prices.map((p) => ({
+      date: p.date.toISOString().slice(0, 10),
+      priceCents: Number(p.closePriceCents),
+      priceUSD: usd(p.closePriceCents),
+      isStale: p.isStale,
+      source: p.source,
+    })),
+  });
+});
+
+// --- POST /test/valuation/simulate-day ------------------------------------
+// Advances one trading day: nudges prices (VTI ±0.5%, BND ±0.2%), stores them,
+// then re-values every active account under the new date.
+testRouter.post('/valuation/simulate-day', async (_req: Request, res: Response) => {
+  const lastVal = await prisma.valuation.findFirst({ orderBy: { valuationDate: 'desc' } });
+  const base = lastVal ? startOfUtcDay(lastVal.valuationDate) : startOfUtcDay(new Date());
+  const simDate = new Date(base.getTime() + 86_400_000);
+
+  const moves: Record<string, number> = { VTI: 0.005, BND: 0.002 };
+  const prices: Record<string, { priceCents: number; priceUSD: string }> = {};
+  for (const [symbol, band] of Object.entries(moves)) {
+    let currentCents: bigint;
+    try {
+      currentCents = (await getStoredPrice(symbol, simDate)).priceCents;
+    } catch {
+      continue; // no prior price for this symbol; skip
+    }
+    const pct = (Math.random() * 2 - 1) * band; // ±band
+    const newCents = BigInt(Math.max(1, Math.round(Number(currentCents) * (1 + pct))));
+    await prisma.marketPrice.upsert({
+      where: { symbol_date: { symbol, date: simDate } },
+      update: { closePriceCents: newCents, isStale: false, source: 'simulated' },
+      create: { symbol, date: simDate, closePriceCents: newCents, isStale: false, source: 'simulated' },
+    });
+    prices[symbol] = { priceCents: Number(newCents), priceUSD: usd(newCents) };
+  }
+
+  const accounts = await prisma.account.findMany({ where: { status: 'ACTIVE' } });
+  const portfolios: Array<{ accountId: string; totalValueUSD: string; totalValueCents: number }> = [];
+  for (const acc of accounts) {
+    const data = await calculateAccountValuation(acc.id, simDate);
+    await storeValuation(acc.id, simDate, data);
+    portfolios.push({
+      accountId: acc.id,
+      totalValueCents: Number(data.totalValueCents),
+      totalValueUSD: usd(data.totalValueCents),
+    });
+  }
+
+  res.json({ simDate: simDate.toISOString().slice(0, 10), prices, portfolios });
 });
 
 export default testRouter;
