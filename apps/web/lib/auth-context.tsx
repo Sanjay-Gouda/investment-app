@@ -46,8 +46,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  function safeGet(key: string): string | null {
+    try {
+      return typeof window !== 'undefined' ? window.localStorage.getItem(key) : null;
+    } catch {
+      return null;
+    }
+  }
+  function safeSet(key: string, value: string) {
+    try {
+      window.localStorage.setItem(key, value);
+    } catch {
+      /* storage unavailable — keep in-memory state only */
+    }
+  }
+  function safeRemove(key: string) {
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      /* ignore */
+    }
+  }
+
   function persist(res: AuthResponse) {
-    window.localStorage.setItem(TOKEN_KEY, res.token);
+    safeSet(TOKEN_KEY, res.token);
     setToken(res.token);
     setUser(res.user);
     setAccount(res.account);
@@ -55,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Hydrate from a stored token on first load.
   useEffect(() => {
-    const stored = typeof window !== 'undefined' ? window.localStorage.getItem(TOKEN_KEY) : null;
+    const stored = safeGet(TOKEN_KEY);
     if (!stored) {
       setLoading(false);
       return;
@@ -68,7 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccount(data.account);
       })
       .catch(() => {
-        window.localStorage.removeItem(TOKEN_KEY);
+        safeRemove(TOKEN_KEY);
         setToken(null);
       })
       .finally(() => setLoading(false));
@@ -91,7 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
-    window.localStorage.removeItem(TOKEN_KEY);
+    safeRemove(TOKEN_KEY);
     setToken(null);
     setUser(null);
     setAccount(null);
