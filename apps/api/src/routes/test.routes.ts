@@ -632,6 +632,11 @@ testRouter.post('/restatement/run-full-test', async (_req: Request, res: Respons
   const vtiBase = await base('VTI', 37_000n);
   const bndBase = await base('BND', 7_000n);
 
+  // Reset these synthetic target dates so the scenario is deterministic on every
+  // run (no leftover restated rows / corrupted originals from a prior run).
+  await prisma.valuation.deleteMany({ where: { accountId, valuationDate: { in: dates } } });
+  await prisma.marketPrice.deleteMany({ where: { symbol: { in: ['VTI', 'BND'] }, date: { in: dates } } });
+
   // Backfill original prices + backdated original valuations for each date.
   for (let i = 0; i < dates.length; i++) {
     const date = dates[i];
@@ -661,8 +666,11 @@ testRouter.post('/restatement/run-full-test', async (_req: Request, res: Respons
           isRestated: false,
         },
       });
+      // Set the ORIGINAL row's TWR ONLY on first creation — before any
+      // restatement exists for this date — so re-runs don't recompute the
+      // published figure from already-corrected data.
+      await updateValuationWithTWR(accountId, date);
     }
-    await updateValuationWithTWR(accountId, date);
   }
 
   const valuationDate = dates[dates.length - 1]; // 3 days ago
@@ -735,7 +743,10 @@ testRouter.post('/restatement/run-full-test', async (_req: Request, res: Respons
       originalStillExists: !!originalAfter,
       restatementCreated: !!restated,
       valuesAreDifferent: !!restated && !!originalAfter && restated.totalValueCents !== originalAfter.totalValueCents,
-      twrRecalculated: !!restated && !!originalAfter && restated.twrPct.toString() !== originalAfter.twrPct.toString(),
+      twrRecalculated:
+        !!restated &&
+        !!originalAfter &&
+        Math.abs(Number(restated.twrPct) - Number(originalAfter.twrPct)) > 0.000001,
     },
     affectedAccounts: result.affectedAccounts,
   });
