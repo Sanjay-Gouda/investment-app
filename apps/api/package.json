@@ -18,6 +18,7 @@
     "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
+    "@alpacahq/alpaca-trade-api": "^5.0.0",
     "@corgi/shared": "*",
     "@prisma/client": "^5.22.0",
     "bcryptjs": "^2.4.3",

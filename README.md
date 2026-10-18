@@ -101,7 +101,7 @@ of market prices for both symbols.
 | ------------------ | -------------------- | ------------ |
 | Stripe Identity    | KYC / identity       | 🟢 Live (sandbox) · dev simulate path |
 | Plaid              | Bank linking + ACH deposits | 🟢 Live (sandbox) · dev simulate path |
-| Alpaca             | Brokerage / trading  | 🟡 Simulated |
+| Alpaca             | Brokerage / orders + fills | 🟢 Live (paper) · dev simulate-fill path |
 | Market data        | Daily close prices   | 🟡 Simulated |
 | PostgreSQL ledger  | Double-entry ledger  | 🟢 Live      |
 | Auth (JWT + bcrypt)| Login / sessions     | 🟢 Live      |

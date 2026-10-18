@@ -17,6 +17,14 @@ import {
   bounceDeposit,
   getBalances,
 } from '../services/plaid.service';
+import {
+  submitPortfolioOrders,
+  handleFillWebhook,
+  getPositions,
+  getLatestPrice,
+  pollOpenOrders,
+} from '../services/alpaca.service';
+import { isPortfolioType } from '../services/portfolios';
 
 /**
  * Dev-only helper routes for exercising the system without a UI or auth.
@@ -287,6 +295,71 @@ testRouter.get('/plaid/balance', async (req: Request, res: Response) => {
     pendingDepositsCents: b.pendingDepositsCents.toString(),
     availableBalanceCents: b.availableBalanceCents.toString(),
   });
+});
+
+// --- POST /test/alpaca/submit-portfolio -----------------------------------
+testRouter.post('/alpaca/submit-portfolio', async (req: Request, res: Response) => {
+  const { email, portfolioType } = (req.body ?? {}) as { email?: string; portfolioType?: string };
+  if (!isPortfolioType(portfolioType)) {
+    throw new HttpError(400, 'INVALID_PORTFOLIO', 'portfolioType must be one of the 4 models');
+  }
+  const accountId = await accountIdByEmail(email);
+  const availableCashCents = await getCashBalance(accountId);
+  const orders = await submitPortfolioOrders({ accountId, portfolioType, availableCashCents });
+  res.status(201).json({ orders, availableCashCents: availableCashCents.toString() });
+});
+
+// --- GET /test/alpaca/orders?email= ---------------------------------------
+testRouter.get('/alpaca/orders', async (req: Request, res: Response) => {
+  const accountId = await accountIdByEmail(req.query.email as string | undefined);
+  const orders = await prisma.order.findMany({ where: { accountId }, orderBy: { createdAt: 'desc' } });
+  res.json({ orders });
+});
+
+// --- POST /test/alpaca/simulate-fill --------------------------------------
+testRouter.post('/alpaca/simulate-fill', async (req: Request, res: Response) => {
+  const { orderId, fillPrice, fillQty } = (req.body ?? {}) as {
+    orderId?: string;
+    fillPrice?: number | string;
+    fillQty?: number | string;
+  };
+  if (!orderId) throw new HttpError(400, 'ORDER_ID_REQUIRED', 'orderId is required');
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+  if (!order) throw new HttpError(404, 'NOT_FOUND', `Order ${orderId} not found`);
+
+  const priceCents = fillPrice != null
+    ? BigInt(Math.round(parseFloat(String(fillPrice)) * 100))
+    : await getLatestPrice(order.symbol);
+  const price = (Number(priceCents) / 100).toFixed(2);
+  const qty = fillQty != null ? String(fillQty) : (order.requestedUnits?.toString() ?? '0');
+  const refId = order.alpacaOrderId ?? order.id;
+
+  const updated = await handleFillWebhook({
+    event: 'fill',
+    order_id: refId,
+    client_order_id: order.id,
+    symbol: order.symbol,
+    qty,
+    price,
+    timestamp: new Date().toISOString(),
+    execution_id: `sim-${order.id}`,
+  });
+
+  const ledgerEntries = await prisma.ledgerEntry.findMany({
+    where: { referenceId: refId, referenceType: 'ALPACA_FILL' },
+  });
+  res.json({ order: updated, ledgerEntries });
+});
+
+// --- GET /test/alpaca/positions?email= ------------------------------------
+testRouter.get('/alpaca/positions', async (req: Request, res: Response) => {
+  const accountId = await accountIdByEmail(req.query.email as string | undefined);
+  res.json({ positions: await getPositions(accountId) });
+});
+
+// --- POST /test/alpaca/check-fills -----------------------------------------
+testRouter.post('/alpaca/check-fills', async (_req: Request, res: Response) => {
+  res.json(await pollOpenOrders());
 });
 
 export default testRouter;

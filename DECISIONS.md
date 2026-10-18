@@ -211,3 +211,47 @@ This log is written as we go — not at hour 47.
   double-entry design.
 
 ---
+
+## [DAY 2 - ALPACA ORDERS + FILLS]
+
+### Buy journal — extends the counter-account model with an INVESTED bucket
+- A buy moves money from cash to investments, so the fill journal is:
+  - `TRADE_BUY_CASH`  -cost  (bucket SETTLED_CASH — available cash down)
+  - `TRADE_BUY_UNITS` +cost  (bucket INVESTED, carries the units — invested up)
+- `COUNTER_BUCKETS` now includes `INVESTED`, so getCashBalance correctly drops
+  by the purchase cost while the journal stays balanced and append-only.
+- Deviation from the spec's literal journal: it had the units leg at amount 0n,
+  which wouldn't balance (sum != 0) and createJournalEntry rejects. We book the
+  cost on the units/INVESTED leg. Money and units stay separate dimensions
+  (BigInt cents vs Decimal(20,6)).
+
+### Allocation math fix
+- Model weights already sum to 0.9 (the 10% buffer is the remainder), so
+  target = weight * availableCash directly. The spec's `investable*weight`
+  (investable = 0.9*cash) double-applied the buffer (left ~19% cash). Fixed.
+
+### Alpaca client: REST via fetch, not the SDK
+- The installed `@alpacahq/alpaca-trade-api` is a major rewrite: the client is a
+  named export, its config key is `secret` (not `secretKey`), and the instance
+  has no `createOrder`/`getLatestTrade`/`getOrder` (uses `_trading`/`_marketData`).
+  Rather than pin/guess the SDK surface, we call the REST API directly with Node's
+  global `fetch` (the spec explicitly allows axios/direct). Verified: real paper
+  orders are created (orders show in the Alpaca dashboard).
+- `ALPACA_BASE_URL` has a trailing `/v2` stripped defensively (REST path adds it).
+
+### Idempotency (mandatory)
+- Two guards: a per-execution Redis key (`alpaca:exec:<id>`, 24h) AND an
+  order.status===FILLED short-circuit. Replaying a fill books no duplicate
+  ledger entries (verified).
+
+### Fills, tax lots, polling
+- One tax lot per FILL (not per order), so partial fills each open a lot.
+- Order lifecycle: PENDING -> SUBMITTED -> PARTIALLY_FILLED/FILLED (or
+  CANCELLED/REJECTED). No cash is reserved at submit, so cancel/reject just
+  updates status (nothing to release).
+- Market-closed is handled gracefully: Alpaca accepts the order (queued to next
+  open); our order stays SUBMITTED. A 30s polling fallback (order-polling.job)
+  books fills if a webhook is missed; `simulate-fill` books them in dev/testing.
+- Prices: live Alpaca data API, falling back to the MarketPrice table, then throw.
+
+---

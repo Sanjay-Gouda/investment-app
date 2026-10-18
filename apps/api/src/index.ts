@@ -25,9 +25,11 @@ import { reconciliationRouter } from './routes/reconciliation.routes';
 import { ledgerRouter } from './routes/ledger.routes';
 import { kycRouter } from './routes/kyc.routes';
 import { plaidRouter } from './routes/plaid.routes';
+import { alpacaRouter } from './routes/alpaca.routes';
 import { webhooksRouter } from './routes/webhooks.routes';
 import { testRouter } from './routes/test.routes';
 import { startAchSettlementWorker } from './jobs/ach-settlement.job';
+import { startOrderPolling } from './jobs/order-polling.job';
 
 // Make BigInt serializable so ledger/money fields survive res.json().
 // (Values are cents; the shared contract types them as strings over the wire.)
@@ -44,6 +46,7 @@ app.use(cors());
 // parsed from raw), so their parsers MUST be registered before the JSON parser.
 app.use('/kyc/webhook', express.raw({ type: 'application/json' }));
 app.use('/plaid/webhook', express.raw({ type: 'application/json' }));
+app.use('/alpaca/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
 // Health check
@@ -62,6 +65,7 @@ app.use('/deposits', depositsRouter);
 app.use('/reconciliation', reconciliationRouter);
 // Ledger is append-only: block PUT/PATCH/DELETE before the router.
 app.use('/ledger', preventLedgerMutation, ledgerRouter);
+app.use('/alpaca', alpacaRouter);
 app.use('/webhooks', webhooksRouter);
 
 // Dev-only helper routes (disabled in production inside the router).
@@ -98,8 +102,9 @@ const server = app.listen(PORT, () => {
   logger.info(`API listening on http://localhost:${PORT}`);
 });
 
-// Background workers (settlement). Resilient: logs if Redis is unavailable.
+// Background workers. Resilient: log if Redis / Alpaca are unavailable.
 startAchSettlementWorker();
+startOrderPolling();
 
 // Graceful shutdown
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

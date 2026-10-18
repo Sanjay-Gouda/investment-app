@@ -123,7 +123,7 @@ export async function createJournalEntry(
  * balanced journal can still move the customer's available cash. Legacy entries
  * with no bucket are treated as real settled cash. See DECISIONS.md.
  */
-export const COUNTER_BUCKETS = ['IN_TRANSIT', 'EXTERNAL'] as const;
+export const COUNTER_BUCKETS = ['IN_TRANSIT', 'EXTERNAL', 'INVESTED'] as const;
 
 /**
  * Point-in-time balance from the ledger as of a value date (inclusive).
@@ -157,7 +157,7 @@ export async function getBalanceAsOf(
     FROM "LedgerEntry"
     WHERE "accountId" = ${accountId}
       AND "effectiveDate" <= ${asOfDate}
-      AND COALESCE(metadata->>'bucket', '') NOT IN ('IN_TRANSIT', 'EXTERNAL')
+      AND COALESCE(metadata->>'bucket', '') NOT IN ('IN_TRANSIT', 'EXTERNAL', 'INVESTED')
   `;
   return rows[0]?.bal ?? 0n;
 }

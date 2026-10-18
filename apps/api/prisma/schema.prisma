@@ -39,6 +39,7 @@ model Account {
   plaidAccountId   String?
   bankAccountLast4 String?
   bankName         String?
+  selectedPortfolio String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   ledgerEntries   LedgerEntry[]
