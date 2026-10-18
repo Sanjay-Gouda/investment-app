@@ -5,38 +5,33 @@ import { useRouter } from 'next/navigation';
 import { usePlaidLink } from 'react-plaid-link';
 import { apiClient } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-context';
+import { RouteGuard } from '@/components/shared/RouteGuard';
+import { OnboardingShell } from '@/components/shared/Shell';
 
-// Show simulate controls when explicitly enabled (works on the live demo too).
 const simulateEnabled = process.env.NEXT_PUBLIC_ENABLE_SIMULATE === 'true';
 
-interface BankDetails {
+interface Bank {
   linked: boolean;
   bankName?: string;
   bankAccountLast4?: string;
 }
 
-export default function LinkBankPage() {
+function LinkBankContent() {
   const router = useRouter();
-  const { user, loading, isAuthenticated } = useAuth();
-  const [bank, setBank] = useState<BankDetails | null>(null);
+  const { user } = useAuth();
+  const [bank, setBank] = useState<Bank | null>(null);
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!loading && !isAuthenticated) router.replace('/login');
-  }, [loading, isAuthenticated, router]);
-
   const loadBank = useCallback(async () => {
-    const { data } = await apiClient.get<BankDetails>('/plaid/bank-details');
+    const { data } = await apiClient.get<Bank>('/plaid/bank-details');
     setBank(data);
   }, []);
-
   useEffect(() => {
-    if (isAuthenticated) loadBank().catch(() => setBank({ linked: false }));
-  }, [isAuthenticated, loadBank]);
+    loadBank().catch(() => setBank({ linked: false }));
+  }, [loadBank]);
 
-  // Plaid Link (real flow). Opens once we have a link token.
   const onSuccess = useCallback(
     async (publicToken: string | null) => {
       if (!publicToken) return;
@@ -46,102 +41,80 @@ export default function LinkBankPage() {
         await loadBank();
         router.push('/deposit');
       } catch {
-        setMessage('Could not link your bank. Please try again.');
+        setMessage('Could not link your bank.');
       } finally {
         setBusy(false);
       }
     },
     [loadBank, router],
   );
-
   const { open, ready } = usePlaidLink({ token: linkToken, onSuccess });
-
   useEffect(() => {
     if (linkToken && ready) open();
   }, [linkToken, ready, open]);
 
-  async function connectBank() {
+  async function connect() {
     setBusy(true);
     setMessage(null);
     try {
       const { data } = await apiClient.post<{ linkToken: string }>('/plaid/link-token');
       setLinkToken(data.linkToken);
     } catch {
-      setMessage('Could not start bank linking. Use the dev simulate option below.');
+      setMessage('Could not start bank linking. Use the dev option below.');
     } finally {
       setBusy(false);
     }
   }
 
-  async function simulateLink() {
+  async function simulate() {
     setBusy(true);
-    setMessage(null);
     try {
       await apiClient.post('/test/plaid/simulate-link', { email: user?.email });
       await loadBank();
       router.push('/deposit');
-    } catch {
-      setMessage('Simulate link failed.');
     } finally {
       setBusy(false);
     }
   }
 
-  if (loading || !bank) return <Centered>Loading…</Centered>;
+  if (!bank) return <div className="card text-center text-sm text-[var(--subtext)]">Loading…</div>;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center gap-6 px-6">
-      <h1 className="text-2xl font-semibold">Link your bank</h1>
+    <div className="card text-center">
+      <div className="text-4xl">🏦</div>
+      <h1 className="mt-2 text-xl font-bold">Connect Your Bank</h1>
+      <p className="mt-1 text-sm text-[var(--subtext)]">Securely link your bank to deposit funds.</p>
 
       {bank.linked ? (
-        <div className="rounded-lg border border-green-200 bg-green-50 p-4">
-          <p className="font-medium text-green-800">
-            {bank.bankName} ****{bank.bankAccountLast4} ✅
-          </p>
-          <div className="mt-3 flex gap-3">
-            <button
-              onClick={() => router.push('/deposit')}
-              className="rounded-md bg-corgi px-4 py-2 text-sm font-medium text-white hover:bg-corgi/90"
-            >
-              Continue to Deposit
-            </button>
-            <button
-              onClick={connectBank}
-              disabled={busy}
-              className="rounded-md border px-4 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50"
-            >
-              Change Bank
-            </button>
+        <>
+          <div className="mt-4 rounded-lg bg-[var(--success-light)] p-3 text-sm font-medium text-[var(--success)]">
+            ✅ {bank.bankName} ****{bank.bankAccountLast4} connected
           </div>
-        </div>
+          <button onClick={() => router.push('/deposit')} className="btn-primary mt-4 w-full">Continue to Deposit →</button>
+          <button onClick={connect} className="mt-2 w-full text-sm text-[var(--subtext)] hover:underline">Change Bank</button>
+        </>
       ) : (
-        <div className="rounded-lg border p-4">
-          <p className="text-sm text-neutral-700">Connect your bank account to fund your account.</p>
-          <button
-            onClick={connectBank}
-            disabled={busy}
-            className="mt-3 rounded-md bg-corgi px-4 py-2 text-sm font-medium text-white hover:bg-corgi/90 disabled:opacity-50"
-          >
-            {busy ? 'Working…' : 'Connect Bank'}
+        <>
+          <button onClick={connect} disabled={busy} className="btn-primary mt-4 w-full">
+            {busy ? 'Working…' : '🏦 Connect Bank Account'}
           </button>
-        </div>
+          <p className="mt-2 text-xs text-[var(--subtext)]">Powered by Plaid — bank-level security</p>
+          {simulateEnabled && (
+            <button onClick={simulate} disabled={busy} className="btn-dev mt-3 w-full">⚡ Simulate Bank Link (Dev Only)</button>
+          )}
+        </>
       )}
-
-      {message && <p className="text-sm text-neutral-600">{message}</p>}
-
-      {simulateEnabled && !bank.linked && (
-        <button
-          onClick={simulateLink}
-          disabled={busy}
-          className="rounded-md border border-dashed border-neutral-400 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
-        >
-          Simulate Bank Link (Dev Only)
-        </button>
-      )}
-    </main>
+      {message && <p className="mt-3 text-sm text-[var(--subtext)]">{message}</p>}
+    </div>
   );
 }
 
-function Centered({ children }: { children: React.ReactNode }) {
-  return <main className="flex min-h-screen items-center justify-center text-sm text-neutral-600">{children}</main>;
+export default function LinkBankPage() {
+  return (
+    <RouteGuard requireAuth requireKYC>
+      <OnboardingShell step={2}>
+        <LinkBankContent />
+      </OnboardingShell>
+    </RouteGuard>
+  );
 }

@@ -17,6 +17,7 @@ export interface AuthAccount {
   id: string;
   kycStatus: KycStatus;
   status: string;
+  selectedPortfolio?: string | null;
 }
 
 interface AuthResponse {
@@ -32,10 +33,12 @@ interface AuthContextValue {
   loading: boolean;
   isAuthenticated: boolean;
   isKYCApproved: boolean;
+  isAdviser: boolean;
   login: (email: string, password: string) => Promise<AuthResponse>;
   register: (email: string, password: string, fullName: string) => Promise<AuthResponse>;
   logout: () => void;
   refresh: () => Promise<void>;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -132,10 +135,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     isAuthenticated: !!token && !!user,
     isKYCApproved: account?.kycStatus === 'APPROVED',
+    isAdviser: user?.role === 'ADVISER',
     login,
     register,
     logout,
     refresh,
+    refreshUser: refresh,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

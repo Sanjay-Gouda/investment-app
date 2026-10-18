@@ -405,3 +405,41 @@ This log is written as we go — not at hour 47.
 ### Debrief verified
 - plant-break {amount,VTI} → detected:true (ledger 39.307674 vs custodian
   41.273058, +5%); resolve drops open count; plant {missing,BND} → detected:true.
+
+## [DAY 2 - UI REDESIGN + ROUTE SECURITY]
+
+### Strict client-side route security
+- `RouteGuard` component (requireAuth / requireKYC / requireRole) wraps pages:
+  loading→spinner, no token→save intended URL + /login, KYC≠APPROVED→/kyc,
+  non-adviser→/dashboard. Adviser group uses one guard in its layout.
+- auth-context gained isAdviser + account.selectedPortfolio + refreshUser.
+- api-client: 401→clear+/login, 403→/dashboard.
+- Rules verified in-browser: login→/dashboard; investor→/adviser/*→/dashboard.
+
+### Route restructure
+- Adviser pages moved under /adviser/* (own (adviser) layout = guard + sidebar).
+  Investor app pages use the top Navbar; onboarding (kyc/link-bank) uses a
+  focused OnboardingShell with progress steps.
+
+### Design system
+- Brand tokens in globals.css (indigo primary, green/red, etc.) + .card /
+  .btn-primary / .field-input; Inter via next/font. Shared components:
+  LoadingSpinner, RouteGuard, Navbar, AdviserSidebar, AuthSplit, Shell,
+  ReturnBadge, StatCard, EmptyState, ProgressSteps.
+- Dashboard: hero value + TWR, returns card, recharts area chart (1W/1M/All),
+  holdings table with P&L colors, recent activity, restatement banner.
+- Redesigned: auth (split), kyc, link-bank, deposit (2-col), portfolio (cards +
+  confirm modal), transactions (grouped + CSV export), orders, restatements.
+
+### Adviser backend (new)
+- /adviser routes (ADVISER-only): overview (AUM/active/open breaks), accounts,
+  approvals (list/approve/reject — cannot approve your own). ApprovalQueue wired.
+
+### Simulate gating
+- All "Simulate" buttons now gate on NEXT_PUBLIC_ENABLE_SIMULATE === 'true'
+  (set on Railway web to show them on the live demo).
+
+### Bug caught in browser testing
+- Dashboard read /valuation/history expecting `date`, but the authed endpoint
+  returns rows with `valuationDate` → runtime crash (caught by the new error
+  boundary). Fixed the mapping.

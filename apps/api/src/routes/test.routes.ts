@@ -54,7 +54,7 @@ import {
   resolveBreak,
   getBreakSummary,
 } from '../services/reconciliation.service';
-import { BreakType } from '@prisma/client';
+import { BreakType, ApprovalType } from '@prisma/client';
 
 /**
  * Dev-only helper routes for exercising the system without a UI or auth.
@@ -904,6 +904,30 @@ testRouter.post('/reconciliation/resolve/:id', async (req: Request, res: Respons
 // --- GET /test/reconciliation/summary -------------------------------------
 testRouter.get('/reconciliation/summary', async (_req: Request, res: Response) => {
   res.json(await getBreakSummary());
+});
+
+// --- POST /test/adviser/seed-approval -------------------------------------
+// Seeds a PENDING rebalance approval from the investor, for the adviser queue.
+testRouter.post('/adviser/seed-approval', async (_req: Request, res: Response) => {
+  const investor = await prisma.user.findUnique({ where: { email: 'investor@demo.com' } });
+  if (!investor) throw new HttpError(404, 'NO_INVESTOR', 'investor@demo.com not found');
+  const approval = await prisma.approvalQueue.create({
+    data: {
+      initiatorId: investor.id,
+      type: ApprovalType.REBALANCE,
+      status: 'PENDING',
+      payload: {
+        portfolio: 'GROWTH',
+        action: 'Monthly portfolio rebalance',
+        trades: [
+          { side: 'BUY', symbol: 'VTI', estCents: 50000 },
+          { side: 'SELL', symbol: 'BND', estCents: 20000 },
+        ],
+        requestedBy: investor.email,
+      },
+    },
+  });
+  res.status(201).json({ approval });
 });
 
 export default testRouter;

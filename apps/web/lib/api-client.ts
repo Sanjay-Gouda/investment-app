@@ -24,10 +24,18 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (res) => res,
   (error) => {
-    if (typeof window !== 'undefined' && error?.response?.status === 401) {
-      window.localStorage.removeItem(TOKEN_KEY);
-      if (!window.location.pathname.startsWith('/login')) {
-        window.location.href = '/login';
+    if (typeof window !== 'undefined') {
+      const status = error?.response?.status;
+      if (status === 401) {
+        window.localStorage.removeItem(TOKEN_KEY);
+        if (!window.location.pathname.startsWith('/login')) {
+          window.location.href = '/login';
+        }
+      } else if (status === 403) {
+        // Forbidden (e.g. investor hitting an adviser endpoint) → back to dashboard.
+        if (!window.location.pathname.startsWith('/dashboard')) {
+          window.location.href = '/dashboard';
+        }
       }
     }
     return Promise.reject(error);

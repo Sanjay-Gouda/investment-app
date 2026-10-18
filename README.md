@@ -107,6 +107,7 @@ of market prices for both symbols.
 | TWR                | Time-weighted return (Decimal) | 🟢 Live |
 | Restatement        | Bitemporal price/valuation corrections | 🟢 Live |
 | Reconciliation     | Ledger vs custodian breaks + aging | 🟢 Live |
+| UI + route security | Redesign, RouteGuard, adviser console | 🟢 Live |
 | Custodian file     | Daily holdings/cash feed | 🔴 **SIMULATED** |
 | PostgreSQL ledger  | Double-entry ledger  | 🟢 Live      |
 | Auth (JWT + bcrypt)| Login / sessions     | 🟢 Live      |

@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
-import { useAuth } from '@/lib/auth-context';
+import { RouteGuard } from '@/components/shared/RouteGuard';
+import { AppShell } from '@/components/shared/Shell';
+import { usd } from '@/components/shared/ui';
 
 interface Order {
   id: string;
@@ -16,70 +17,48 @@ interface Order {
   createdAt: string;
 }
 
-function usd(cents: string | null): string {
-  if (cents == null) return '—';
-  return `$${(Number(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+function OrdersContent() {
+  const [orders, setOrders] = useState<Order[]>([]);
+  useEffect(() => {
+    apiClient.get('/portfolio/orders').then(({ data }) => setOrders(data.orders)).catch(() => {});
+  }, []);
+
+  const badge = (s: string) =>
+    s === 'FILLED' ? 'bg-[var(--success-light)] text-[var(--success)]' : s === 'REJECTED' || s === 'CANCELLED' ? 'bg-[var(--danger-light)] text-[var(--danger)]' : 'bg-[#FFFBEB] text-[var(--warning)]';
+
+  return (
+    <>
+      <h1 className="mb-6 text-2xl font-bold">Orders</h1>
+      <div className="card overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-[var(--subtext)]"><th className="pb-2">Symbol</th><th>Side</th><th>Units</th><th>Avg Price</th><th>Status</th><th>Date</th></tr>
+          </thead>
+          <tbody>
+            {orders.length === 0 && <tr><td colSpan={6} className="py-3 text-[var(--subtext)]">No orders yet.</td></tr>}
+            {orders.map((o) => (
+              <tr key={o.id} className="border-t border-[var(--border)]">
+                <td className="py-2 font-medium">{o.symbol}</td>
+                <td>{o.side}</td>
+                <td>{o.filledUnits ?? o.requestedUnits ?? '—'}</td>
+                <td>{o.filledAvgPriceCents ? usd(o.filledAvgPriceCents) : '—'}</td>
+                <td><span className={`rounded px-2 py-0.5 text-xs font-medium ${badge(o.status)}`}>{o.status}</span></td>
+                <td>{new Date(o.createdAt).toLocaleDateString('en-US')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
 }
 
 export default function OrdersPage() {
-  const router = useRouter();
-  const { loading, isAuthenticated } = useAuth();
-  const [orders, setOrders] = useState<Order[]>([]);
-
-  useEffect(() => {
-    if (!loading && !isAuthenticated) router.replace('/login');
-  }, [loading, isAuthenticated, router]);
-
-  useEffect(() => {
-    if (isAuthenticated) apiClient.get('/portfolio/orders').then(({ data }) => setOrders(data.orders)).catch(() => {});
-  }, [isAuthenticated]);
-
   return (
-    <main className="mx-auto min-h-screen max-w-3xl px-6 py-10">
-      <h1 className="text-2xl font-semibold">Orders</h1>
-      <table className="mt-6 w-full text-sm">
-        <thead>
-          <tr className="border-b text-left text-neutral-500">
-            <th className="py-2">Symbol</th>
-            <th>Side</th>
-            <th>Units</th>
-            <th>Avg Price</th>
-            <th>Status</th>
-            <th>Date</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.length === 0 && (
-            <tr>
-              <td colSpan={6} className="py-3 text-neutral-500">
-                No orders yet.
-              </td>
-            </tr>
-          )}
-          {orders.map((o) => (
-            <tr key={o.id} className="border-b">
-              <td className="py-2 font-medium">{o.symbol}</td>
-              <td>{o.side}</td>
-              <td>{o.filledUnits ?? o.requestedUnits ?? '—'}</td>
-              <td>{usd(o.filledAvgPriceCents)}</td>
-              <td>
-                <span
-                  className={`rounded px-2 py-0.5 text-xs font-medium ${
-                    o.status === 'FILLED'
-                      ? 'bg-green-100 text-green-800'
-                      : o.status === 'REJECTED' || o.status === 'CANCELLED'
-                        ? 'bg-red-100 text-red-800'
-                        : 'bg-amber-100 text-amber-800'
-                  }`}
-                >
-                  {o.status}
-                </span>
-              </td>
-              <td>{new Date(o.createdAt).toLocaleDateString('en-US')}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </main>
+    <RouteGuard requireAuth requireKYC>
+      <AppShell>
+        <OrdersContent />
+      </AppShell>
+    </RouteGuard>
   );
 }

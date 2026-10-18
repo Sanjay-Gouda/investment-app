@@ -3,12 +3,96 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --primary: #4f46e5;
+  --primary-dark: #4338ca;
+  --primary-light: #eef2ff;
+  --success: #00c853;
+  --success-light: #f0fff4;
+  --danger: #ff3d57;
+  --danger-light: #fff5f5;
+  --warning: #ffb300;
+  --bg: #f8f9fa;
+  --card: #ffffff;
+  --text: #1a1a2e;
+  --subtext: #6b7280;
+  --border: #e5e7eb;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-inter), 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer components {
+  .card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+  }
+
+  .btn-primary {
+    background: var(--primary);
+    color: #fff;
+    border-radius: 8px;
+    padding: 12px 24px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .btn-primary:hover {
+    background: var(--primary-dark);
+  }
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-outline {
+    background: #fff;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .btn-outline:hover {
+    background: var(--bg);
+  }
+
+  .btn-dev {
+    background: #fff;
+    color: var(--subtext);
+    border: 1px dashed #c7c7d1;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 0.8125rem;
+    cursor: pointer;
+  }
+
+  .field-input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 0.9375rem;
+    outline: none;
+    background: #fff;
+  }
+  .field-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-light);
+  }
+}
+
+.positive {
+  color: var(--success);
+}
+.negative {
+  color: var(--danger);
 }
