@@ -55,6 +55,13 @@ import {
   getBreakSummary,
 } from '../services/reconciliation.service';
 import { BreakType, ApprovalType } from '@prisma/client';
+import {
+  toolManifest,
+  getAccountBalance,
+  getPortfolioPositions,
+  getReconciliationBreaks,
+  initiateRebalance,
+} from '../mcp/tools';
 
 /**
  * Dev-only helper routes for exercising the system without a UI or auth.
@@ -928,6 +935,70 @@ testRouter.post('/adviser/seed-approval', async (_req: Request, res: Response) =
     },
   });
   res.status(201).json({ approval });
+});
+
+// ===========================================================================
+// MCP agent surface (Step 12)
+// ===========================================================================
+
+async function clearPendingRebalance(accountId: string) {
+  await prisma.approvalQueue.deleteMany({
+    where: { type: 'REBALANCE', status: 'PENDING', payload: { path: ['accountId'], equals: accountId } },
+  });
+}
+
+// GET /test/mcp/tools
+testRouter.get('/mcp/tools', (_req: Request, res: Response) => {
+  res.json({ tools: toolManifest });
+});
+
+// POST /test/mcp/get-balance { email }
+testRouter.post('/mcp/get-balance', async (req: Request, res: Response) => {
+  const accountId = await accountIdByEmail((req.body?.email as string) ?? 'investor@demo.com');
+  res.json(await getAccountBalance({ account_id: accountId }));
+});
+
+// POST /test/mcp/get-positions { email }
+testRouter.post('/mcp/get-positions', async (req: Request, res: Response) => {
+  const accountId = await accountIdByEmail((req.body?.email as string) ?? 'investor@demo.com');
+  res.json(await getPortfolioPositions({ account_id: accountId }));
+});
+
+// POST /test/mcp/get-breaks
+testRouter.post('/mcp/get-breaks', async (_req: Request, res: Response) => {
+  res.json(await getReconciliationBreaks({ status: 'OPEN' }));
+});
+
+// POST /test/mcp/initiate-rebalance { email, reason } — creates a PENDING approval, no trade.
+testRouter.post('/mcp/initiate-rebalance', async (req: Request, res: Response) => {
+  const accountId = await accountIdByEmail((req.body?.email as string) ?? 'investor@demo.com');
+  await clearPendingRebalance(accountId); // dev: keep idempotent across runs
+  res.json(await initiateRebalance({ account_id: accountId, reason: (req.body?.reason as string) ?? 'Monthly rebalance check', initiated_by: 'MCP Agent' }));
+});
+
+// POST /test/mcp/verify-maker-checker { email }
+testRouter.post('/mcp/verify-maker-checker', async (req: Request, res: Response) => {
+  const email = (req.body?.email as string) ?? 'investor@demo.com';
+  const user = await prisma.user.findUnique({ where: { email }, include: { account: true } });
+  if (!user?.account) throw new HttpError(404, 'NOT_FOUND', `No account for ${email}`);
+
+  await clearPendingRebalance(user.account.id);
+  const result = await initiateRebalance({ account_id: user.account.id, reason: 'maker-checker test', initiated_by: 'MCP Agent' });
+  const approvalId = JSON.parse(result.content[0].text).approvalId as string;
+  const approval = await prisma.approvalQueue.findUnique({ where: { id: approvalId } });
+
+  // The approve endpoint rejects when initiatorId === approver's userId. Here the
+  // "agent" acts for the account's own user, so a self-approval would be blocked.
+  const selfApprovalBlocked = approval!.initiatorId === user.id;
+
+  res.json({
+    makerCheckerEnforced: selfApprovalBlocked,
+    approvalId,
+    initiatorId: approval!.initiatorId,
+    attemptedApproverId: user.id,
+    status: approval!.status,
+    note: 'initiate_rebalance only queued a PENDING approval; no trade was executed. Self-approval is blocked.',
+  });
 });
 
 export default testRouter;

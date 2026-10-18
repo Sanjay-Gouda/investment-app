@@ -30,6 +30,7 @@ import { valuationRouter } from './routes/valuation.routes';
 import { twrRouter } from './routes/twr.routes';
 import { restatementRouter } from './routes/restatement.routes';
 import { adviserRouter } from './routes/adviser.routes';
+import { mcpRouter } from './routes/mcp.routes';
 import { webhooksRouter } from './routes/webhooks.routes';
 import { testRouter } from './routes/test.routes';
 import { startAchSettlementWorker } from './jobs/ach-settlement.job';
@@ -76,6 +77,7 @@ app.use('/valuation', valuationRouter);
 app.use('/twr', twrRouter);
 app.use('/restatement', restatementRouter);
 app.use('/adviser', adviserRouter);
+app.use('/mcp', mcpRouter);
 app.use('/webhooks', webhooksRouter);
 
 // Dev-only helper routes (disabled in production inside the router).

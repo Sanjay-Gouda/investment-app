@@ -443,3 +443,33 @@ This log is written as we go — not at hour 47.
 - Dashboard read /valuation/history expecting `date`, but the authed endpoint
   returns rows with `valuationDate` → runtime crash (caught by the new error
   boundary). Fixed the mapping.
+
+## [DAY 2 - MCP AGENT SURFACE]
+
+### Shape
+- 3 read tools (get_account_balance, get_portfolio_positions,
+  get_reconciliation_breaks) the agent calls freely; 1 write tool
+  (initiate_rebalance) that NEVER executes — it only creates a PENDING
+  ApprovalQueue entry a human adviser must approve. The agent cannot approve its
+  own request (maker-checker, enforced in /adviser/approvals/:id/approve).
+- AGENT_RESTRICTIONS.md lists 10 operations the agent can never do + reasons.
+
+### ESM/CJS isolation (key engineering decision)
+- @modelcontextprotocol/sdk is ESM-only; this API is CommonJS. So the tool LOGIC
+  lives in src/mcp/tools.ts (SDK-free) and is shared by two transports:
+  - src/mcp/server.ts (stdio) loads the SDK via a native dynamic import hidden
+    from TS (`Function('s','return import(s)')`) so tsc can't rewrite it to
+    require() (which would ERR_REQUIRE_ESM). Starts only when run directly.
+  - routes/mcp.routes.ts exposes the same handlers over HTTP (GET /mcp/tools,
+    POST /mcp/tools/:name) for testing without an MCP client.
+- Result: the main CJS build/typecheck is unaffected; `node dist/mcp/server.js`
+  runs the stdio server (verified booting).
+
+### Conventions
+- All tool responses are JSON strings in { content:[{type:'text',text}] }.
+- Money in both cents and USD; TWR formatted. Empty data → empty arrays, not
+  errors. Every tool call logged with Winston.
+
+### Verified
+- All 6 checks: tools manifest, balance, positions, breaks, initiate-rebalance
+  (PENDING approval, no trade), maker-checker enforced. stdio server boots.

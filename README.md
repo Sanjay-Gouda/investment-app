@@ -126,3 +126,30 @@ deterministic fake data for now.
 | `npm run db:seed`    | `prisma db seed` (api workspace)          |
 | `npm run db:generate`| Generates the Prisma client               |
 | `npm run typecheck`  | Type-checks all workspaces                |
+
+## MCP Agent Surface
+
+This system exposes an MCP (Model Context Protocol) server so AI agents can
+interact with the app through a small, safe surface.
+
+### Tools
+
+**Read tools (no approval required)**
+1. `get_account_balance` — total value, cash, invested, pending deposits, TWR (supports `as_of_date`).
+2. `get_portfolio_positions` — positions with units, price, market value, unrealized gain/loss.
+3. `get_reconciliation_breaks` — ledger↔custodian breaks with aging (filter by status / min age).
+
+**Write tool (human approval required)**
+4. `initiate_rebalance` — creates a **PENDING** `ApprovalQueue` entry. It never executes a trade, and the agent **cannot approve its own request** (maker-checker). A human adviser approves at `/adviser/approvals`.
+
+### Running the MCP server
+```bash
+cd apps/api && npm run build && node dist/mcp/server.js   # stdio transport
+```
+The same tools are also exposed over HTTP for testing: `GET /mcp/tools` (manifest) and `POST /mcp/tools/<name>`.
+
+### Agent restrictions
+See [apps/api/src/mcp/AGENT_RESTRICTIONS.md](apps/api/src/mcp/AGENT_RESTRICTIONS.md) for the full list of operations the agent can **never** perform (direct trade execution, ledger corrections, KYC decisions, approving its own requests, tax-lot selection, cross-account access, overriding breaks, changing account settings, withdrawals, raw ledger access) and the reasoning for each.
+
+### Integration status
+**LIVE** — connected to the real database. The one write tool is approval-gated.
