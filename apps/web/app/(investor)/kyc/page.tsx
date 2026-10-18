@@ -6,7 +6,8 @@ import { loadStripe } from '@stripe/stripe-js';
 import { apiClient } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-context';
 
-const isDev = process.env.NODE_ENV !== 'production';
+// Show simulate controls when explicitly enabled (works on the live demo too).
+const simulateEnabled = process.env.NEXT_PUBLIC_ENABLE_SIMULATE === 'true';
 const stripePk = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 
 export default function KycPage() {
@@ -111,7 +112,7 @@ export default function KycPage() {
 
       {message && <p className="text-sm text-neutral-600">{message}</p>}
 
-      {isDev && status !== 'APPROVED' && (
+      {simulateEnabled && status !== 'APPROVED' && (
         <button
           onClick={simulateApproval}
           disabled={busy}

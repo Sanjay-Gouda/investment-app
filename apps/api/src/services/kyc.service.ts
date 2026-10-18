@@ -126,8 +126,9 @@ export async function getKYCStatus(accountId: string): Promise<{
  */
 export async function simulateKYCApproval(accountId: string): Promise<Account> {
   const env = process.env.NODE_ENV;
-  if (env !== 'development' && env !== 'test') {
-    throw new Error('simulateKYCApproval is only available in development/test');
+  // Allowed in dev/test, or in production when ENABLE_SIMULATE=true (live demo).
+  if (env !== 'development' && env !== 'test' && process.env.ENABLE_SIMULATE !== 'true') {
+    throw new Error('simulateKYCApproval is disabled (set ENABLE_SIMULATE=true to allow)');
   }
 
   const account = await prisma.account.update({

@@ -33,7 +33,8 @@ import { isPortfolioType } from '../services/portfolios';
 export const testRouter = Router();
 
 testRouter.use((_req, res, next) => {
-  if (process.env.NODE_ENV === 'production') {
+  // Disabled in production UNLESS ENABLE_SIMULATE=true (for the live demo).
+  if (process.env.NODE_ENV === 'production' && process.env.ENABLE_SIMULATE !== 'true') {
     res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'disabled' } });
     return;
   }

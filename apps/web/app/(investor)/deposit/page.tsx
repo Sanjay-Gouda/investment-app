@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-context';
 
-const isDev = process.env.NODE_ENV !== 'production';
+// Show simulate controls when explicitly enabled (works on the live demo too).
+const simulateEnabled = process.env.NEXT_PUBLIC_ENABLE_SIMULATE === 'true';
 
 interface Deposit {
   id: string;
@@ -133,13 +134,13 @@ export default function DepositPage() {
             <th className="py-2">Date</th>
             <th>Amount</th>
             <th>Status</th>
-            {isDev && <th>Dev actions</th>}
+            {simulateEnabled && <th>Dev actions</th>}
           </tr>
         </thead>
         <tbody>
           {deposits.length === 0 && (
             <tr>
-              <td colSpan={isDev ? 4 : 3} className="py-3 text-neutral-500">
+              <td colSpan={simulateEnabled ? 4 : 3} className="py-3 text-neutral-500">
                 No deposits yet.
               </td>
             </tr>
@@ -151,7 +152,7 @@ export default function DepositPage() {
               <td>
                 <StatusBadge status={d.status} />
               </td>
-              {isDev && (
+              {simulateEnabled && (
                 <td className="py-2">
                   {d.status === 'PENDING' ? (
                     <span className="flex gap-2">

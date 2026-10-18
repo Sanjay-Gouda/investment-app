@@ -6,7 +6,8 @@ import { usePlaidLink } from 'react-plaid-link';
 import { apiClient } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-context';
 
-const isDev = process.env.NODE_ENV !== 'production';
+// Show simulate controls when explicitly enabled (works on the live demo too).
+const simulateEnabled = process.env.NEXT_PUBLIC_ENABLE_SIMULATE === 'true';
 
 interface BankDetails {
   linked: boolean;
@@ -128,7 +129,7 @@ export default function LinkBankPage() {
 
       {message && <p className="text-sm text-neutral-600">{message}</p>}
 
-      {isDev && !bank.linked && (
+      {simulateEnabled && !bank.linked && (
         <button
           onClick={simulateLink}
           disabled={busy}
