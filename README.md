@@ -106,6 +106,8 @@ of market prices for both symbols.
 | Daily valuation    | EOD snapshots + value history | 🟢 Live (BullMQ cron) |
 | TWR                | Time-weighted return (Decimal) | 🟢 Live |
 | Restatement        | Bitemporal price/valuation corrections | 🟢 Live |
+| Reconciliation     | Ledger vs custodian breaks + aging | 🟢 Live |
+| Custodian file     | Daily holdings/cash feed | 🔴 **SIMULATED** |
 | PostgreSQL ledger  | Double-entry ledger  | 🟢 Live      |
 | Auth (JWT + bcrypt)| Login / sessions     | 🟢 Live      |
 | Redis / BullMQ     | Background jobs      | 🟢 Live      |

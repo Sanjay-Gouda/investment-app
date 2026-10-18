@@ -46,6 +46,15 @@ import {
   getValuationAsRestated,
   getRestatementHistory,
 } from '../services/restatement.service';
+import { generateDailyFile } from '../services/custodian-simulator.service';
+import {
+  reconcileAgainstFile,
+  runDailyReconciliation,
+  listBreaks,
+  resolveBreak,
+  getBreakSummary,
+} from '../services/reconciliation.service';
+import { BreakType } from '@prisma/client';
 
 /**
  * Dev-only helper routes for exercising the system without a UI or auth.
@@ -816,6 +825,85 @@ testRouter.post('/restatement/simulate-late-dividend', async (_req: Request, res
     after: after && { totalValueCents: Number(after.totalValueCents), twrPct: after.twrPct.toString() },
     restatement,
   });
+});
+
+// ===========================================================================
+// Reconciliation (Step 10)
+// ===========================================================================
+
+const BREAK_TYPE_FOR: Record<string, BreakType> = {
+  missing: BreakType.MISSING_IN_CUSTODIAN,
+  amount: BreakType.AMOUNT_MISMATCH,
+  price: BreakType.PRICE_MISMATCH,
+};
+
+// --- POST /test/reconciliation/generate-file (clean) ----------------------
+testRouter.post('/reconciliation/generate-file', async (_req: Request, res: Response) => {
+  const today = startOfUtcDay(new Date());
+  res.json({ file: await generateDailyFile(today, false) });
+});
+
+// --- POST /test/reconciliation/plant-break --------------------------------
+testRouter.post('/reconciliation/plant-break', async (req: Request, res: Response) => {
+  const { type, symbol } = (req.body ?? {}) as { type?: 'missing' | 'amount' | 'price'; symbol?: string };
+  if (!type || !BREAK_TYPE_FOR[type]) {
+    throw new HttpError(400, 'INVALID_TYPE', "type must be 'missing', 'amount' or 'price'");
+  }
+  const today = startOfUtcDay(new Date());
+  const file = await generateDailyFile(today, true, { type, symbol });
+  const { breaks } = await reconcileAgainstFile(file, today);
+
+  const breakType = BREAK_TYPE_FOR[type];
+  const found = breaks.find((b) => b.breakType === breakType && (!symbol || b.symbol === symbol)) ?? null;
+
+  res.json({
+    breakPlanted: { type: breakType, symbol: symbol ?? null, description: `${symbol ?? 'a position'} ${type} break` },
+    breakFound: found && {
+      id: found.id,
+      breakType: found.breakType,
+      symbol: found.symbol,
+      ledgerValue: found.ledgerValue?.toString() ?? null,
+      custodianValue: found.custodianValue?.toString() ?? null,
+      difference: found.difference?.toString() ?? null,
+      agingDays: found.agingDays,
+      status: found.status,
+    },
+    detected: !!found,
+  });
+});
+
+// --- POST /test/reconciliation/run ----------------------------------------
+testRouter.post('/reconciliation/run', async (_req: Request, res: Response) => {
+  res.json(await runDailyReconciliation());
+});
+
+// --- GET /test/reconciliation/breaks --------------------------------------
+testRouter.get('/reconciliation/breaks', async (_req: Request, res: Response) => {
+  const breaks = await listBreaks({ status: 'all' });
+  res.json({
+    breaks: breaks.map((b) => ({
+      id: b.id,
+      breakType: b.breakType,
+      symbol: b.symbol,
+      ledgerValue: b.ledgerValue?.toString() ?? null,
+      custodianValue: b.custodianValue?.toString() ?? null,
+      difference: b.difference?.toString() ?? null,
+      agingDays: b.agingDays,
+      status: b.status,
+      breakDate: b.breakDate.toISOString().slice(0, 10),
+    })),
+  });
+});
+
+// --- POST /test/reconciliation/resolve/:id --------------------------------
+testRouter.post('/reconciliation/resolve/:id', async (req: Request, res: Response) => {
+  const resolution = (req.body?.resolution as string) ?? 'Resolved (test)';
+  res.json({ break: await resolveBreak(req.params.id, resolution) });
+});
+
+// --- GET /test/reconciliation/summary -------------------------------------
+testRouter.get('/reconciliation/summary', async (_req: Request, res: Response) => {
+  res.json(await getBreakSummary());
 });
 
 export default testRouter;

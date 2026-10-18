@@ -189,14 +189,30 @@ model ReconciliationBreak {
   id            String      @id @default(uuid())
   breakDate     DateTime
   symbol        String?
+  accountId     String?
   breakType     BreakType
   ledgerValue   Decimal?    @db.Decimal(20, 6)
   custodianValue Decimal?   @db.Decimal(20, 6)
   difference    Decimal?    @db.Decimal(20, 6)
+  description   String?
   status        BreakStatus @default(OPEN)
+  resolution    String?
   resolvedAt    DateTime?
   createdAt     DateTime    @default(now())
   agingDays     Int         @default(0)
+
+  @@index([status, agingDays])
+}
+
+model CustodianFile {
+  id          String   @id @default(uuid())
+  fileDate    DateTime
+  source      String   @default("SIMULATED_CUSTODIAN")
+  rawData     Json
+  processedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([fileDate])
 }
 
 enum BreakType {

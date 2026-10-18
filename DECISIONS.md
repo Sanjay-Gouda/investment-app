@@ -370,3 +370,38 @@ This log is written as we go — not at hour 47.
 ### Frontend
 - Investor /restatements (correction history), dashboard restatement banner,
   adviser /restatement price-correction tool (adviser-role gated).
+
+## [DAY 2 - RECONCILIATION]
+
+### Two sources of truth
+- Our ledger/positions/prices vs a SIMULATED custodian file. A clean file is
+  built FROM our own data, so it reconciles to zero breaks; a planted break is
+  then detectable.
+
+### Break types & detection
+- MISSING_IN_LEDGER (custodian has it, we don't), MISSING_IN_CUSTODIAN (we have
+  it, they don't), AMOUNT_MISMATCH (units differ > 1e-6, or cash > $0.01),
+  PRICE_MISMATCH (price differs > 0.1%). Reconcile per (accountId, symbol).
+- Injected breaks: missing (remove a position), amount (+5% units), price (+3%).
+
+### Idempotency / no duplicates
+- createBreak de-dups against existing OPEN breaks (breakDate+type+symbol+account),
+  so running reconciliation twice a day yields the same result. A resolved break
+  does not block a new one if the mismatch recurs.
+- agingDays = days since breakDate, refreshed by the daily job; new break = 0.
+
+### Schema
+- New CustodianFile model (rawData Json). ReconciliationBreak gained accountId,
+  description, resolution (additive migration — ran non-interactively).
+
+### Job & access
+- BullMQ reconciliation worker, weekday 6am ET cron. Reconciliation is
+  ADVISER-ONLY (investors get 403) — "investors cannot see breaks".
+
+### Custodian file is SIMULATED
+- Clearly labelled SIMULATED in the file (source: SIMULATED_CUSTODIAN), the UI
+  ("Custodian file: SIMULATED") and the README. In production this is a real feed.
+
+### Debrief verified
+- plant-break {amount,VTI} → detected:true (ledger 39.307674 vs custodian
+  41.273058, +5%); resolve drops open count; plant {missing,BND} → detected:true.

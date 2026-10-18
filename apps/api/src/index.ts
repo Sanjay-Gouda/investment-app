@@ -34,6 +34,7 @@ import { testRouter } from './routes/test.routes';
 import { startAchSettlementWorker } from './jobs/ach-settlement.job';
 import { startOrderPolling } from './jobs/order-polling.job';
 import { startDailyValuationWorker } from './jobs/daily-valuation.job';
+import { startReconciliationWorker } from './jobs/reconciliation.job';
 
 // Make BigInt serializable so ledger/money fields survive res.json().
 // (Values are cents; the shared contract types them as strings over the wire.)
@@ -113,6 +114,7 @@ const server = app.listen(PORT, () => {
 startAchSettlementWorker();
 startOrderPolling();
 startDailyValuationWorker();
+startReconciliationWorker();
 
 // Graceful shutdown
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
