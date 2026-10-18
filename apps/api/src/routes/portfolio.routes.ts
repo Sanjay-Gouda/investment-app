@@ -56,6 +56,35 @@ portfolioRouter.post('/invest', authenticate, requireKYC, async (req: AuthedRequ
     throw new HttpError(400, 'INSUFFICIENT_CASH', 'Minimum investable balance is $10.00');
   }
 
+  // Maker-checker: investments above the configured threshold don't execute —
+  // they route to the human approval queue. The initiator can't approve it.
+  const estimatedInvestCents = (availableCashCents * 90n) / 100n;
+  const thresholdCents = BigInt(process.env.TRADE_APPROVAL_THRESHOLD_CENTS || '1000000');
+  if (estimatedInvestCents > thresholdCents) {
+    const approval = await prisma.approvalQueue.create({
+      data: {
+        initiatorId: req.user!.userId,
+        type: 'TRADE',
+        status: 'PENDING',
+        payload: {
+          accountId,
+          portfolioType,
+          estimatedTotalCents: estimatedInvestCents.toString(),
+          action: `Invest available cash in ${portfolioType}`,
+          requestedBy: req.user!.email,
+          note: `Exceeds the $${(Number(thresholdCents) / 100).toLocaleString('en-US')} approval threshold — requires adviser approval.`,
+        },
+      },
+    });
+    res.status(202).json({
+      pendingApproval: true,
+      approvalId: approval.id,
+      estimatedTotalCents: estimatedInvestCents.toString(),
+      message: 'Investment exceeds the approval threshold and is pending adviser approval.',
+    });
+    return;
+  }
+
   const orders = await submitPortfolioOrders({ accountId, portfolioType, availableCashCents });
 
   // Estimated total = sum of requestedUnits * latest price (cents).

@@ -43,6 +43,7 @@ function PortfolioContent() {
   const [confirm, setConfirm] = useState<Model | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -58,7 +59,8 @@ function PortfolioContent() {
     setBusy(true);
     setError(null);
     try {
-      await apiClient.post('/portfolio/invest', { portfolioType: type });
+      const { data } = await apiClient.post('/portfolio/invest', { portfolioType: type });
+      setPendingApproval(!!data.pendingApproval);
       setDone(true);
     } catch (err: unknown) {
       setError((err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Could not place orders');
@@ -70,9 +72,13 @@ function PortfolioContent() {
   if (done) {
     return (
       <div className="card mx-auto max-w-md text-center">
-        <div className="text-4xl">✅</div>
-        <h2 className="mt-2 text-xl font-bold">Portfolio orders placed!</h2>
-        <p className="mt-1 text-sm text-[var(--subtext)]">Your investments are being processed.</p>
+        <div className="text-4xl">{pendingApproval ? '⏳' : '✅'}</div>
+        <h2 className="mt-2 text-xl font-bold">{pendingApproval ? 'Submitted for approval' : 'Portfolio orders placed!'}</h2>
+        <p className="mt-1 text-sm text-[var(--subtext)]">
+          {pendingApproval
+            ? 'This investment exceeds the approval threshold. A human adviser must approve it before orders are placed.'
+            : 'Your investments are being processed.'}
+        </p>
         <button onClick={() => router.push('/dashboard')} className="btn-primary mt-4 w-full">Go to Dashboard →</button>
       </div>
     );

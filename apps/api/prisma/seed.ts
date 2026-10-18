@@ -64,7 +64,7 @@ async function main() {
   // Idempotent reset. TRUNCATE (not deleteMany) because the LedgerEntry
   // append-only trigger blocks DELETE; per-row triggers do not fire on TRUNCATE.
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "LedgerEntry","TaxLot","Position","Order","Valuation","MarketPrice","ReconciliationBreak","ApprovalQueue","Account","User" RESTART IDENTITY CASCADE',
+    'TRUNCATE "LedgerEntry","TaxLot","Position","Order","Valuation","MarketPrice","ReconciliationBreak","ApprovalQueue","CustodianFile","Account","User" RESTART IDENTITY CASCADE',
   );
 
   const passwordHash = await bcrypt.hash('demo123456', 10);
@@ -196,6 +196,37 @@ async function main() {
   const vtiPrices = priceSeries('VTI', 19_800, 18, 90); // ~ +1.1k c drift over 30d
   const bndPrices = priceSeries('BND', 9_740, 3, 25);
   await prisma.marketPrice.createMany({ data: [...vtiPrices, ...bndPrices] });
+
+  // --- A planted reconciliation break (for the breaks screen demo) ----------
+  await prisma.reconciliationBreak.create({
+    data: {
+      breakDate: daysAgo(2),
+      symbol: 'VTI',
+      accountId,
+      breakType: 'AMOUNT_MISMATCH',
+      ledgerValue: new Prisma.Decimal('30.123456'),
+      custodianValue: new Prisma.Decimal('30.500000'),
+      difference: new Prisma.Decimal('0.376544'),
+      description: 'VTI units differ (seed)',
+      status: 'OPEN',
+      agingDays: 2,
+    },
+  });
+
+  // --- A pending approval in the adviser queue ------------------------------
+  await prisma.approvalQueue.create({
+    data: {
+      initiatorId: investor.id,
+      type: 'REBALANCE',
+      status: 'PENDING',
+      payload: {
+        accountId,
+        portfolioType: 'GROWTH',
+        action: 'Monthly portfolio rebalance',
+        requestedBy: 'investor@demo.com',
+      },
+    },
+  });
 
   // eslint-disable-next-line no-console
   console.log('Seed complete:', {
