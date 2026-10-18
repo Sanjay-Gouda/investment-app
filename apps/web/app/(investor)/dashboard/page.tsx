@@ -60,6 +60,11 @@ export default function DashboardPage() {
   const [asOf, setAsOf] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [twr, setTwr] = useState<TWRPeriods | null>(null);
+  const [restatement, setRestatement] = useState<{
+    valuationDate: string;
+    original: { twrPct: string | null };
+    corrected: { twrPct: string };
+  } | null>(null);
 
   useEffect(() => {
     if (!loading && !isAuthenticated) router.replace('/login');
@@ -78,6 +83,10 @@ export default function DashboardPage() {
       .then(({ data }) => setHistory(data.valuations ?? []))
       .catch(() => setHistory([]));
     apiClient.get('/twr/current').then(({ data }) => setTwr(data)).catch(() => setTwr(null));
+    apiClient
+      .get('/restatement/history')
+      .then(({ data }) => setRestatement(data.restatements?.[0] ?? null))
+      .catch(() => setRestatement(null));
   }, [isAuthenticated]);
 
   if (loading || !data) return <Centered>Loading…</Centered>;
@@ -87,8 +96,23 @@ export default function DashboardPage() {
   const invested = String(Number(total) - Number(cash));
   const anyStale = data.positions.some((p) => p.currentPriceCents === '0');
 
+  const fmtPct = (p: string | null) => (p == null ? '—' : `${(Number(p) * 100).toFixed(2)}%`);
+
   return (
     <main className="mx-auto min-h-screen max-w-3xl px-6 py-10">
+      {restatement && (
+        <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm">
+          <p className="font-medium text-amber-900">⚠️ Your returns were recently restated</p>
+          <p className="mt-1 text-amber-800">
+            A price correction was applied to {new Date(restatement.valuationDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}. Your corrected return is{' '}
+            {fmtPct(restatement.corrected.twrPct)} (was {fmtPct(restatement.original.twrPct)}).{' '}
+            <Link href="/restatements" className="font-medium underline">
+              View details →
+            </Link>
+          </p>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Portfolio Overview</h1>

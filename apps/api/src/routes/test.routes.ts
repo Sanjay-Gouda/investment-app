@@ -39,6 +39,13 @@ import {
   calculateSubPeriodReturn,
   updateValuationWithTWR,
 } from '../services/twr.service';
+import {
+  restateValuationsAfterPriceCorrection,
+  restateAccountValuation,
+  getValuationAsPublished,
+  getValuationAsRestated,
+  getRestatementHistory,
+} from '../services/restatement.service';
 
 /**
  * Dev-only helper routes for exercising the system without a UI or auth.
@@ -482,7 +489,7 @@ testRouter.post('/valuation/simulate-day', async (_req: Request, res: Response) 
     const pct = (Math.random() * 2 - 1) * band; // ±band
     const newCents = BigInt(Math.max(1, Math.round(Number(currentCents) * (1 + pct))));
     await prisma.marketPrice.upsert({
-      where: { symbol_date: { symbol, date: simDate } },
+      where: { symbol_date_isRestated: { symbol, date: simDate, isRestated: false } },
       update: { closePriceCents: newCents, isStale: false, source: 'simulated' },
       create: { symbol, date: simDate, closePriceCents: newCents, isStale: false, source: 'simulated' },
     });
@@ -565,7 +572,7 @@ testRouter.post('/twr/simulate-performance', async (_req: Request, res: Response
       const pct = (Math.random() * 2 - 1) * band;
       const newCents = BigInt(Math.max(1, Math.round(Number(currentCents) * (1 + pct))));
       await prisma.marketPrice.upsert({
-        where: { symbol_date: { symbol, date: cursor } },
+        where: { symbol_date_isRestated: { symbol, date: cursor, isRestated: false } },
         update: { closePriceCents: newCents, isStale: false, source: 'simulated' },
         create: { symbol, date: cursor, closePriceCents: newCents, isStale: false, source: 'simulated' },
       });
@@ -582,6 +589,222 @@ testRouter.post('/twr/simulate-performance', async (_req: Request, res: Response
   }
 
   res.json({ days: chart.length, chart });
+});
+
+// ===========================================================================
+// Restatement (Step 9)
+// ===========================================================================
+
+/** Pick an investor valuation date that also has a VTI price — a good restatement target. */
+async function pickRestatementTarget(accountId: string) {
+  const vals = await prisma.valuation.findMany({
+    where: { accountId, isRestated: false },
+    orderBy: { valuationDate: 'asc' },
+  });
+  const candidates: { val: (typeof vals)[number]; priceCents: bigint }[] = [];
+  for (const v of vals) {
+    const mp = await prisma.marketPrice.findFirst({
+      where: { symbol: 'VTI', date: v.valuationDate, isRestated: false },
+    });
+    if (mp) candidates.push({ val: v, priceCents: mp.closePriceCents });
+  }
+  if (candidates.length === 0) return null;
+  // ~3 entries before the latest (a "past date"), else the earliest candidate.
+  return candidates[Math.max(0, candidates.length - 4)];
+}
+
+// --- POST /test/restatement/run-full-test ---------------------------------
+// Self-contained: backfills 3 real past-dated snapshots (5/4/3 days ago) with
+// BACKDATED bookingDates, then restates the 3-days-ago one — so the bitemporal
+// "as published on an earlier date" works with real dates.
+testRouter.post('/restatement/run-full-test', async (_req: Request, res: Response) => {
+  const accountId = await accountIdByEmail('investor@demo.com');
+  const DAY = 86_400_000;
+  const dates = [5, 4, 3].map((n) => startOfUtcDay(new Date(Date.now() - n * DAY))); // oldest → newest
+
+  const base = async (sym: string, fallback: bigint): Promise<bigint> => {
+    try {
+      return (await getStoredPrice(sym, new Date())).priceCents;
+    } catch {
+      return fallback;
+    }
+  };
+  const vtiBase = await base('VTI', 37_000n);
+  const bndBase = await base('BND', 7_000n);
+
+  // Backfill original prices + backdated original valuations for each date.
+  for (let i = 0; i < dates.length; i++) {
+    const date = dates[i];
+    await prisma.marketPrice.upsert({
+      where: { symbol_date_isRestated: { symbol: 'VTI', date, isRestated: false } },
+      update: {},
+      create: { symbol: 'VTI', date, closePriceCents: vtiBase + BigInt(i * 50), isStale: false, source: 'backfill' },
+    });
+    await prisma.marketPrice.upsert({
+      where: { symbol_date_isRestated: { symbol: 'BND', date, isRestated: false } },
+      update: {},
+      create: { symbol: 'BND', date, closePriceCents: bndBase + BigInt(i * 5), isStale: false, source: 'backfill' },
+    });
+    const exists = await prisma.valuation.findFirst({ where: { accountId, valuationDate: date, isRestated: false } });
+    if (!exists) {
+      const data = await calculateAccountValuation(accountId, date);
+      await prisma.valuation.create({
+        data: {
+          accountId,
+          valuationDate: date,
+          bookingDate: date, // BACKDATED — recorded on its value date
+          totalValueCents: data.totalValueCents,
+          cashCents: data.cashCents,
+          investedValueCents: data.investedValueCents,
+          returnPct: new Prisma.Decimal(0),
+          twrPct: new Prisma.Decimal(0),
+          isRestated: false,
+        },
+      });
+    }
+    await updateValuationWithTWR(accountId, date);
+  }
+
+  const valuationDate = dates[dates.length - 1]; // 3 days ago
+  const vtiRow = await prisma.marketPrice.findFirst({
+    where: { symbol: 'VTI', date: valuationDate, isRestated: false },
+  });
+  const originalPriceCents = vtiRow!.closePriceCents;
+  const correctedPriceCents = BigInt(Math.round(Number(originalPriceCents) * 1.05)); // +5%
+
+  // Snapshot the original row BEFORE restating.
+  const originalBefore = await prisma.valuation.findFirst({
+    where: { accountId, valuationDate, isRestated: false },
+  });
+
+  const result = await restateValuationsAfterPriceCorrection(
+    'VTI',
+    valuationDate,
+    correctedPriceCents,
+    'Custodian correction (run-full-test)',
+  );
+
+  // Re-read both rows AFTER.
+  const originalAfter = await prisma.valuation.findFirst({
+    where: { accountId, valuationDate, isRestated: false },
+  });
+  const restated = await prisma.valuation.findFirst({
+    where: { accountId, valuationDate, isRestated: true },
+    orderBy: { bookingDate: 'desc' },
+  });
+
+  const originalUntouched =
+    !!originalBefore &&
+    !!originalAfter &&
+    originalBefore.totalValueCents === originalAfter.totalValueCents &&
+    originalBefore.twrPct.toString() === originalAfter.twrPct.toString() &&
+    originalBefore.bookingDate.getTime() === originalAfter.bookingDate.getTime();
+
+  const money = (c: bigint) => `$${(Number(c) / 100).toFixed(2)}`;
+  const pct = (p: string) => `${(Number(p) * 100).toFixed(2)}%`;
+
+  res.json({
+    scenario: 'Price correction for VTI',
+    originalPrice: { date: valuationDate.toISOString().slice(0, 10), priceCents: Number(originalPriceCents), priceUSD: money(originalPriceCents) },
+    correctedPrice: { date: valuationDate.toISOString().slice(0, 10), priceCents: Number(correctedPriceCents), priceUSD: money(correctedPriceCents) },
+    valuationDate: valuationDate.toISOString().slice(0, 10),
+    asPublished: originalAfter && {
+      totalValueCents: Number(originalAfter.totalValueCents),
+      totalValueUSD: money(originalAfter.totalValueCents),
+      twrPct: pct(originalAfter.twrPct.toString()),
+      bookingDate: originalAfter.bookingDate.toISOString(),
+    },
+    asRestated: restated && {
+      totalValueCents: Number(restated.totalValueCents),
+      totalValueUSD: money(restated.totalValueCents),
+      twrPct: pct(restated.twrPct.toString()),
+      bookingDate: restated.bookingDate.toISOString(),
+    },
+    difference: restated && originalAfter && {
+      valueCents: Number(restated.totalValueCents - originalAfter.totalValueCents),
+      valueUSD: money(restated.totalValueCents - originalAfter.totalValueCents),
+      twrPctChange: `${((Number(restated.twrPct) - Number(originalAfter.twrPct)) * 100).toFixed(2)}%`,
+    },
+    auditTrail: {
+      originalRowId: originalAfter?.id,
+      restatementRowId: restated?.id,
+      originalUntouched,
+      bothQueryable: !!originalAfter && !!restated,
+    },
+    verification: {
+      originalStillExists: !!originalAfter,
+      restatementCreated: !!restated,
+      valuesAreDifferent: !!restated && !!originalAfter && restated.totalValueCents !== originalAfter.totalValueCents,
+      twrRecalculated: !!restated && !!originalAfter && restated.twrPct.toString() !== originalAfter.twrPct.toString(),
+    },
+    affectedAccounts: result.affectedAccounts,
+  });
+});
+
+// --- GET /test/restatement/as-published?email=&valuationDate=&asOfDate= ----
+testRouter.get('/restatement/as-published', async (req: Request, res: Response) => {
+  const accountId = await accountIdByEmail(req.query.email as string | undefined);
+  if (!req.query.valuationDate || !req.query.asOfDate) {
+    throw new HttpError(400, 'PARAMS_REQUIRED', 'valuationDate and asOfDate required');
+  }
+  const v = await getValuationAsPublished(
+    accountId,
+    new Date(String(req.query.valuationDate)),
+    new Date(String(req.query.asOfDate)),
+  );
+  res.json({ valuation: v });
+});
+
+// --- GET /test/restatement/as-restated?email=&valuationDate= ---------------
+testRouter.get('/restatement/as-restated', async (req: Request, res: Response) => {
+  const accountId = await accountIdByEmail(req.query.email as string | undefined);
+  if (!req.query.valuationDate) throw new HttpError(400, 'PARAMS_REQUIRED', 'valuationDate required');
+  const v = await getValuationAsRestated(accountId, new Date(String(req.query.valuationDate)));
+  res.json({ valuation: v });
+});
+
+// --- GET /test/restatement/history?email= ---------------------------------
+testRouter.get('/restatement/history', async (req: Request, res: Response) => {
+  const accountId = await accountIdByEmail(req.query.email as string | undefined);
+  res.json({ restatements: await getRestatementHistory(accountId) });
+});
+
+// --- POST /test/restatement/simulate-late-dividend ------------------------
+testRouter.post('/restatement/simulate-late-dividend', async (_req: Request, res: Response) => {
+  const accountId = await accountIdByEmail('investor@demo.com');
+  const target = await pickRestatementTarget(accountId);
+  if (!target) throw new HttpError(400, 'NO_TARGET', 'No valuation to restate');
+  const valuationDate = target.val.valuationDate;
+
+  const before = await getValuationAsRestated(accountId, valuationDate);
+
+  // A late dividend is investment income (not an external cash flow): a single
+  // value-increasing ledger entry (append-only).
+  const dividendCents = 2500n; // $25.00
+  await prisma.ledgerEntry.create({
+    data: {
+      accountId,
+      type: EntryType.DIVIDEND_CASH,
+      amount: dividendCents,
+      assetSymbol: 'VTI',
+      description: 'Late dividend (simulated)',
+      effectiveDate: valuationDate,
+      metadata: { bucket: 'SETTLED_CASH', event: 'late_dividend' },
+    },
+  });
+
+  const restatement = await restateAccountValuation(accountId, valuationDate, 'Late dividend arrived', {
+    dividend: { symbol: 'VTI', amountCents: Number(dividendCents) },
+  });
+  const after = await getValuationAsRestated(accountId, valuationDate);
+
+  res.json({
+    valuationDate: valuationDate.toISOString().slice(0, 10),
+    dividendCents: Number(dividendCents),
+    before: before && { totalValueCents: Number(before.totalValueCents), twrPct: before.twrPct.toString() },
+    after: after && { totalValueCents: Number(after.totalValueCents), twrPct: after.twrPct.toString() },
+    restatement,
+  });
 });
 
 export default testRouter;

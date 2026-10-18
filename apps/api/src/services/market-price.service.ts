@@ -63,7 +63,7 @@ export async function fetchAndStorePrice(symbol: string, date: Date): Promise<bi
   const priceCents = BigInt(Math.round(close * 100));
 
   await prisma.marketPrice.upsert({
-    where: { symbol_date: { symbol, date: day } },
+    where: { symbol_date_isRestated: { symbol, date: day, isRestated: false } },
     update: { closePriceCents: priceCents, isStale: false, source: 'alpaca' },
     create: { symbol, date: day, closePriceCents: priceCents, isStale: false, source: 'alpaca' },
   });
@@ -79,9 +79,11 @@ export async function fetchAndStorePrice(symbol: string, date: Date): Promise<bi
  */
 export async function getLatestPrice(symbol: string, asOfDate: Date = new Date()): Promise<LatestPrice> {
   const asOf = startOfUtcDay(asOfDate);
+  // Prefer the most recent date, and for a given date prefer a restatement
+  // (isRestated desc) and then the newest correction (createdAt desc).
   const row = await prisma.marketPrice.findFirst({
     where: { symbol, date: { lte: new Date(asOf.getTime() + 86_400_000 - 1) } },
-    orderBy: { date: 'desc' },
+    orderBy: [{ date: 'desc' }, { isRestated: 'desc' }, { createdAt: 'desc' }],
   });
   if (!row) throw new Error(`No price available for ${symbol}`);
 

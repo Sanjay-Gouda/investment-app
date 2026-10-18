@@ -92,25 +92,23 @@ export async function storeValuation(
   twrPct: Prisma.Decimal = new Prisma.Decimal(0),
 ): Promise<Valuation> {
   const day = startOfUtcDay(valuationDate);
-  return prisma.valuation.upsert({
-    where: { accountId_valuationDate_isRestated: { accountId, valuationDate: day, isRestated: false } },
-    update: {
-      totalValueCents: data.totalValueCents,
-      cashCents: data.cashCents,
-      investedValueCents: data.investedValueCents,
-      returnPct: twrPct,
-      twrPct,
-    },
-    create: {
-      accountId,
-      valuationDate: day,
-      totalValueCents: data.totalValueCents,
-      cashCents: data.cashCents,
-      investedValueCents: data.investedValueCents,
-      returnPct: twrPct,
-      twrPct,
-      isRestated: false,
-    },
+  // Manual upsert of the ORIGINAL (isRestated=false) row — there is no longer a
+  // unique constraint (restatements add extra rows per date).
+  const existing = await prisma.valuation.findFirst({
+    where: { accountId, valuationDate: day, isRestated: false },
+  });
+  const fields = {
+    totalValueCents: data.totalValueCents,
+    cashCents: data.cashCents,
+    investedValueCents: data.investedValueCents,
+    returnPct: twrPct,
+    twrPct,
+  };
+  if (existing) {
+    return prisma.valuation.update({ where: { id: existing.id }, data: fields });
+  }
+  return prisma.valuation.create({
+    data: { accountId, valuationDate: day, isRestated: false, ...fields },
   });
 }
 
@@ -146,12 +144,32 @@ export async function getValuationAsOf(
   return { ...row, interpolated };
 }
 
-/** Latest snapshot for an account. */
+/** Latest EFFECTIVE snapshot (newest value date, newest booking = corrected). */
 export async function getLatestValuation(accountId: string): Promise<Valuation | null> {
   return prisma.valuation.findFirst({
-    where: { accountId, isRestated: false },
-    orderBy: { valuationDate: 'desc' },
+    where: { accountId },
+    orderBy: [{ valuationDate: 'desc' }, { bookingDate: 'desc' }],
   });
+}
+
+/**
+ * The EFFECTIVE value series: one row per valuationDate — the latest booking
+ * (so a restatement supersedes the original). This is the "current truth" the
+ * TWR and charts should use, while originals stay untouched for audit.
+ */
+export async function getEffectiveValuationHistory(
+  accountId: string,
+  startDate: Date,
+  endDate: Date,
+): Promise<{ valuationDate: Date; totalValueCents: bigint }[]> {
+  return prisma.$queryRaw<{ valuationDate: Date; totalValueCents: bigint }[]>`
+    SELECT DISTINCT ON ("valuationDate") "valuationDate", "totalValueCents"
+    FROM "Valuation"
+    WHERE "accountId" = ${accountId}
+      AND "valuationDate" >= ${startDate}
+      AND "valuationDate" <= ${endDate}
+    ORDER BY "valuationDate" ASC, "bookingDate" DESC
+  `;
 }
 
 /**

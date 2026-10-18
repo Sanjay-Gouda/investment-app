@@ -164,18 +164,25 @@ model Valuation {
   accountId           String
   account             Account  @relation(fields: [accountId], references: [id])
   valuationDate       DateTime
+  // Bitemporality: bookingDate = when WE recorded it (restatements reuse the
+  // same valuationDate with a new bookingDate). Original rows are never updated.
+  bookingDate         DateTime @default(now())
   totalValueCents     BigInt
   cashCents           BigInt
   investedValueCents  BigInt
   returnPct           Decimal  @db.Decimal(10, 6)
   twrPct              Decimal  @db.Decimal(10, 6)
   isRestated          Boolean  @default(false)
-  originalValueCents  BigInt?
+  restatementReason   String?
+  originalTotalValueCents BigInt?
   originalTwrPct      Decimal? @db.Decimal(10, 6)
+  originalBookingDate DateTime?
+  correctedPrices     Json?
   createdAt           DateTime @default(now())
 
-  @@unique([accountId, valuationDate, isRestated])
+  // No uniqueness on (account, date): multiple rows per date (original + N restated).
   @@index([accountId, valuationDate])
+  @@index([accountId, valuationDate, bookingDate])
 }
 
 model ReconciliationBreak {
@@ -260,7 +267,13 @@ model MarketPrice {
   closePriceCents BigInt
   isStale   Boolean  @default(false)
   source    String
+  // Restatement: a correction is a NEW row (isRestated=true) for the same
+  // symbol+date; the original row is never updated.
+  isRestated         Boolean  @default(false)
+  originalPriceCents BigInt?
+  restatementReason  String?
+  restatementDate    DateTime?
   createdAt DateTime @default(now())
 
-  @@unique([symbol, date])
+  @@unique([symbol, date, isRestated])
 }

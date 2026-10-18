@@ -329,3 +329,44 @@ This log is written as we go — not at hour 47.
   (replaces the Step 7 placeholder 0).
 - Unit test (twr.test.ts) proves the chained 7.625% scenario and that a
   same-period deposit yields a 0% sub-period (deposit excluded). 10/10 tests pass.
+
+## [DAY 2 - RESTATEMENT MACHINERY (bitemporal)]
+
+### Never rewrite history — only add rows
+- A price correction is a NEW MarketPrice row (isRestated=true) for the same
+  symbol+date; the original (isRestated=false) is never updated. Unique key
+  widened to (symbol, date, isRestated).
+- A restatement is a NEW Valuation row with the SAME valuationDate and a NEW
+  bookingDate, carrying originalTotalValueCents / originalTwrPct /
+  originalBookingDate / correctedPrices. The original row is never updated.
+- Dropped the Valuation (account, date, isRestated) unique so a date can have the
+  original + N restatements. storeValuation / updateValuationWithTWR became
+  manual find-or-update-by-id instead of compound-key upsert.
+
+### Effective vs original (the key correctness point)
+- "Current truth" = the latest bookingDate row per valuationDate
+  (getEffectiveValuationHistory, Postgres DISTINCT ON). TWR and getLatestValuation
+  now use the EFFECTIVE series, so a restatement flows into returns while the
+  original stays for audit.
+- getValuationAsPublished(date, asOfBookingDate) = latest booking ≤ that moment
+  ("what we believed then"); getValuationAsRestated(date) = latest booking now.
+
+### Market-price resolution
+- getLatestPrice prefers a restated row for a given date (orderBy date desc,
+  isRestated desc, createdAt desc), so revaluation picks up the correction.
+
+### Demo wiring
+- run-full-test backfills 3 real past-dated snapshots with BACKDATED bookingDates
+  (so the bitemporal as-of-earlier-date query is meaningful in a fast-forward
+  demo), then restates the 3-days-ago one. Verified: original untouched, restated
+  created, values differ, TWR recalculated, both queryable, 2 rows in DB with
+  originalTotalValueCents filled.
+
+### Migration
+- Hand-authored `add_restatement` SQL (migrate dev refuses non-interactively on
+  the data-loss warning) applied via `prisma migrate deploy`; backfills existing
+  rows' bookingDate = createdAt.
+
+### Frontend
+- Investor /restatements (correction history), dashboard restatement banner,
+  adviser /restatement price-correction tool (adviser-role gated).

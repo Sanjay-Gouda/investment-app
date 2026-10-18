@@ -105,6 +105,7 @@ of market prices for both symbols.
 | Market data        | Daily close prices (Alpaca IEX) | 🟢 Live |
 | Daily valuation    | EOD snapshots + value history | 🟢 Live (BullMQ cron) |
 | TWR                | Time-weighted return (Decimal) | 🟢 Live |
+| Restatement        | Bitemporal price/valuation corrections | 🟢 Live |
 | PostgreSQL ledger  | Double-entry ledger  | 🟢 Live      |
 | Auth (JWT + bcrypt)| Login / sessions     | 🟢 Live      |
 | Redis / BullMQ     | Background jobs      | 🟢 Live      |

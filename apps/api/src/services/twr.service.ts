@@ -1,7 +1,7 @@
 import { Prisma, type Valuation } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { logger } from '../lib/logger';
-import { getValuationHistory } from './valuation.service';
+import { getEffectiveValuationHistory } from './valuation.service';
 
 /**
  * Time-Weighted Return (TWR) — the industry-standard performance measure.
@@ -120,8 +120,9 @@ export async function getCashFlowsForPeriod(
  * consecutive daily valuation snapshots. Needs ≥ 2 snapshots; otherwise 0.
  */
 export async function calculateTWR(accountId: string, startDate: Date, endDate: Date): Promise<TWRResult> {
-  const all = await getValuationHistory(accountId, startDate, endDate);
-  const series = all.filter((v) => !v.isRestated);
+  // Use the EFFECTIVE series (latest booking per date), so a restatement flows
+  // into TWR while original rows remain for audit.
+  const series = await getEffectiveValuationHistory(accountId, startDate, endDate);
   if (series.length < 2) return emptyResult(startDate, endDate);
 
   let chain = D1;
@@ -237,19 +238,18 @@ export async function updateValuationWithTWR(accountId: string, valuationDate: D
   const twr = await calculateTWR(accountId, inception, valuationDate);
   const twrDec = new Prisma.Decimal(twr.twrPct).toDecimalPlaces(6);
 
-  try {
-    return await prisma.valuation.update({
-      where: { accountId_valuationDate_isRestated: { accountId, valuationDate: day, isRestated: false } },
-      data: { twrPct: twrDec, returnPct: twrDec },
-    });
-  } catch (err) {
+  // Update the ORIGINAL snapshot row for this date (restatements set their own TWR).
+  const original = await prisma.valuation.findFirst({
+    where: { accountId, valuationDate: day, isRestated: false },
+  });
+  if (!original) {
     logger.warn('updateValuationWithTWR: no snapshot to update', {
       accountId,
       date: day.toISOString().slice(0, 10),
-      error: err instanceof Error ? err.message : String(err),
     });
     return null;
   }
+  return prisma.valuation.update({ where: { id: original.id }, data: { twrPct: twrDec, returnPct: twrDec } });
 }
 
 export const twrService = {

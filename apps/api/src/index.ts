@@ -28,6 +28,7 @@ import { plaidRouter } from './routes/plaid.routes';
 import { alpacaRouter } from './routes/alpaca.routes';
 import { valuationRouter } from './routes/valuation.routes';
 import { twrRouter } from './routes/twr.routes';
+import { restatementRouter } from './routes/restatement.routes';
 import { webhooksRouter } from './routes/webhooks.routes';
 import { testRouter } from './routes/test.routes';
 import { startAchSettlementWorker } from './jobs/ach-settlement.job';
@@ -71,6 +72,7 @@ app.use('/ledger', preventLedgerMutation, ledgerRouter);
 app.use('/alpaca', alpacaRouter);
 app.use('/valuation', valuationRouter);
 app.use('/twr', twrRouter);
+app.use('/restatement', restatementRouter);
 app.use('/webhooks', webhooksRouter);
 
 // Dev-only helper routes (disabled in production inside the router).
