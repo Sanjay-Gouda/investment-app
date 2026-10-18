@@ -3,6 +3,9 @@ import { prisma } from '../lib/prisma';
 import { logger } from '../lib/logger';
 import { getCashBalance } from './ledger.service';
 import { getLatestPrice, fetchAllActivePrices } from './market-price.service';
+// NOTE: twr.service imports from this module too — a benign circular import.
+// Both only reference each other inside functions, so CommonJS resolves fine.
+import { updateValuationWithTWR } from './twr.service';
 
 /**
  * Valuation service — daily account snapshots.
@@ -171,7 +174,10 @@ export async function runDailyValuation(): Promise<{
   for (const account of accounts) {
     try {
       const data = await calculateAccountValuation(account.id, today);
+      // Store the snapshot first (so today's value is in the series), then
+      // compute TWR-since-inception and write it onto the snapshot.
       await storeValuation(account.id, today, data, new Prisma.Decimal(0));
+      await updateValuationWithTWR(account.id, today);
       accountsValued++;
       logger.info(`Valued account ${account.id}: $${(Number(data.totalValueCents) / 100).toFixed(2)}`, {
         hasStalePrice: data.hasStalePrice,

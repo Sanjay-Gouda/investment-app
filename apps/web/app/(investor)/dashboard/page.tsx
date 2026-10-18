@@ -34,6 +34,16 @@ interface HistoryPoint {
   date: string;
   totalValueCents: number;
 }
+interface TWRResult {
+  twrPct: string;
+  twrDisplay: string;
+}
+interface TWRPeriods {
+  sinceInception: TWRResult | null;
+  oneMonth: TWRResult | null;
+  oneWeek: TWRResult | null;
+  today: TWRResult | null;
+}
 
 const usd = (cents: string | number) =>
   `$${(Number(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -49,6 +59,7 @@ export default function DashboardPage() {
   const [pendingCents, setPendingCents] = useState('0');
   const [asOf, setAsOf] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
+  const [twr, setTwr] = useState<TWRPeriods | null>(null);
 
   useEffect(() => {
     if (!loading && !isAuthenticated) router.replace('/login');
@@ -66,6 +77,7 @@ export default function DashboardPage() {
       .get('/valuation/history?days=30')
       .then(({ data }) => setHistory(data.valuations ?? []))
       .catch(() => setHistory([]));
+    apiClient.get('/twr/current').then(({ data }) => setTwr(data)).catch(() => setTwr(null));
   }, [isAuthenticated]);
 
   if (loading || !data) return <Centered>Loading…</Centered>;
@@ -104,6 +116,8 @@ export default function DashboardPage() {
         <Stat label="Invested" value={usd(invested)} sub={pctOf(invested, total)} />
         <Stat label="Pending" value={usd(pendingCents)} />
       </div>
+
+      {twr && <ReturnsCard twr={twr} />}
 
       <Sparkline points={history} />
 
@@ -168,6 +182,44 @@ export default function DashboardPage() {
         <Link href="/portfolio" className="rounded-md bg-corgi px-4 py-2 font-medium text-white hover:bg-corgi/90">Invest</Link>
       </div>
     </main>
+  );
+}
+
+function ReturnRow({ label, r }: { label: string; r: TWRResult | null }) {
+  if (!r) return null;
+  const positive = Number(r.twrPct) >= 0;
+  const zero = Number(r.twrPct) === 0;
+  const color = zero ? 'text-neutral-500' : positive ? 'text-green-700' : 'text-red-700';
+  return (
+    <div className="flex items-center justify-between py-1 text-sm">
+      <span className="text-neutral-600">{label}</span>
+      <span className={`font-medium ${color}`}>
+        {r.twrDisplay} {zero ? '' : positive ? '↑' : '↓'}
+      </span>
+    </div>
+  );
+}
+
+function ReturnsCard({ twr }: { twr: TWRPeriods }) {
+  return (
+    <div className="mt-4 rounded-lg border p-5">
+      <div className="flex items-center gap-1">
+        <h2 className="text-sm font-semibold">Returns (Time-Weighted)</h2>
+        <span
+          title="Time-weighted return measures investment performance excluding the effect of deposits and withdrawals. It shows how your chosen portfolio performed, not how much money you made."
+          className="cursor-help text-xs text-neutral-400"
+        >
+          ⓘ
+        </span>
+      </div>
+      <div className="mt-2">
+        <ReturnRow label="Since Inception" r={twr.sinceInception} />
+        <ReturnRow label="This Month" r={twr.oneMonth} />
+        <ReturnRow label="This Week" r={twr.oneWeek} />
+        <ReturnRow label="Today" r={twr.today} />
+      </div>
+      <p className="mt-2 text-[10px] text-neutral-400">Deposits &amp; withdrawals are excluded from these figures.</p>
+    </div>
   );
 }
 

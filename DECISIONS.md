@@ -291,3 +291,41 @@ This log is written as we go — not at hour 47.
   accounts from prior testing, not just the demo investor.
 
 ---
+
+## [DAY 2 - TIME-WEIGHTED RETURN (TWR)]
+
+### Why TWR
+- TWR isolates portfolio performance from the timing/size of cash flows — a
+  deposit is not a return. We show "Time-Weighted Return" explicitly (labelled,
+  with a tooltip) because the debrief will ask.
+
+### Formula & precision
+- Rᵢ = (End − Start − CashFlow) / (Start + CashFlow); TWR = Π(1 + Rᵢ) − 1.
+- ALL math uses Prisma.Decimal (decimal.js) — never JS floats. Stored as
+  Decimal(10,6) on Valuation (twrPct = returnPct), e.g. 0.023400 = 2.34%.
+- denominator ≤ 0 → sub-period return 0 (no capital).
+
+### Cash-flow detection respects the bucket model (key subtlety)
+- A deposit is booked as two legs (IN_TRANSIT + EXTERNAL) that net to zero, and
+  settlement moves it into SETTLED_CASH. So cash flows for TWR sum only the
+  non-counter-bucket legs of CASH_DEPOSIT / CASH_WITHDRAWAL / CASH_DEPOSIT_RETURN
+  — the same filter as the cash balance. (Dividends are NOT cash flows — they are
+  return.) Summing raw CASH_DEPOSIT would be 0 and break everything.
+
+### Sub-periods
+- Chain the return between each pair of consecutive daily valuation snapshots,
+  with the interval's net cash flow. Needs ≥ 2 snapshots; otherwise TWR = 0 (not
+  an error). The /twr/sub-periods endpoint exposes the breakdown transparently.
+
+### Demo-time note
+- `referenceEnd` extends the window to the latest snapshot when snapshots exist
+  beyond the real clock (simulate-performance fast-forwards trading days), so TWR
+  reflects the whole simulated series.
+- calculateAccountValuation reads cash as-of-now (getCashBalance), fine for
+  forward simulation; a true historical backfill would need as-of-date cash.
+
+### Integration & proof
+- runDailyValuation now calls updateValuationWithTWR after storing each snapshot
+  (replaces the Step 7 placeholder 0).
+- Unit test (twr.test.ts) proves the chained 7.625% scenario and that a
+  same-period deposit yields a 0% sub-period (deposit excluded). 10/10 tests pass.

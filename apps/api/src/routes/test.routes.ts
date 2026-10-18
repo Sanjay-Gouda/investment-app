@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { EntryType } from '@prisma/client';
+import { EntryType, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { HttpError } from '../types';
 import {
@@ -33,6 +33,12 @@ import {
   storeValuation,
 } from '../services/valuation.service';
 import { fetchAndStorePrice, getLatestPrice as getStoredPrice } from '../services/market-price.service';
+import {
+  calculateTWRForPeriods,
+  calculateTWRSinceInception,
+  calculateSubPeriodReturn,
+  updateValuationWithTWR,
+} from '../services/twr.service';
 
 /**
  * Dev-only helper routes for exercising the system without a UI or auth.
@@ -496,6 +502,86 @@ testRouter.post('/valuation/simulate-day', async (_req: Request, res: Response) 
   }
 
   res.json({ simDate: simDate.toISOString().slice(0, 10), prices, portfolios });
+});
+
+// ===========================================================================
+// TWR (Step 8)
+// ===========================================================================
+
+// --- GET /test/twr/calculate?email= ---------------------------------------
+testRouter.get('/twr/calculate', async (req: Request, res: Response) => {
+  const accountId = await accountIdByEmail(req.query.email as string | undefined);
+  res.json(await calculateTWRForPeriods(accountId));
+});
+
+// --- GET /test/twr/verify-deposit-excluded?email= -------------------------
+// Proves a deposit does not change TWR: a deposit with no market move forms a
+// sub-period whose return is exactly 0, so chaining leaves TWR unchanged.
+testRouter.get('/twr/verify-deposit-excluded', async (req: Request, res: Response) => {
+  const accountId = await accountIdByEmail(req.query.email as string | undefined);
+  const before = await calculateTWRSinceInception(accountId);
+
+  const depositCents = 5_000_000n; // $50,000
+  const lastValue = BigInt(before.endValueCents || '0');
+  const rDeposit = calculateSubPeriodReturn(lastValue, lastValue + depositCents, depositCents); // → 0
+  const beforePct = new Prisma.Decimal(before.twrPct);
+  const afterPct = beforePct.plus(1).times(rDeposit.plus(1)).minus(1);
+  const depositsExcluded = afterPct.minus(beforePct).abs().lt(new Prisma.Decimal('0.000001'));
+
+  res.json({
+    note: 'A $50,000 deposit with no market movement is a 0% sub-period; TWR is unchanged.',
+    twrBefore: before.twrDisplay,
+    twrAfter: `${afterPct.times(100).toDecimalPlaces(2).gte(0) ? '+' : ''}${afterPct.times(100).toDecimalPlaces(2)}%`,
+    twrBeforePct: beforePct.toString(),
+    twrAfterPct: afterPct.toString(),
+    depositSubPeriodReturn: rDeposit.toString(),
+    depositsExcluded,
+  });
+});
+
+// --- POST /test/twr/simulate-performance ----------------------------------
+// Simulates 30 trading days for the demo investor: nudge prices, value & TWR
+// each day. Returns chart data [{ date, value, twrPct }].
+testRouter.post('/twr/simulate-performance', async (_req: Request, res: Response) => {
+  const accountId = await accountIdByEmail('investor@demo.com');
+  const lastVal = await prisma.valuation.findFirst({
+    where: { accountId },
+    orderBy: { valuationDate: 'desc' },
+  });
+  let cursor = lastVal ? startOfUtcDay(lastVal.valuationDate) : startOfUtcDay(new Date());
+
+  const bands: Record<string, number> = { VTI: 0.005, BND: 0.002 };
+  const chart: Array<{ date: string; valueCents: number; valueUSD: string; twrPct: string }> = [];
+
+  for (let i = 0; i < 30; i++) {
+    cursor = new Date(cursor.getTime() + 86_400_000);
+    for (const [symbol, band] of Object.entries(bands)) {
+      let currentCents: bigint;
+      try {
+        currentCents = (await getStoredPrice(symbol, cursor)).priceCents;
+      } catch {
+        continue;
+      }
+      const pct = (Math.random() * 2 - 1) * band;
+      const newCents = BigInt(Math.max(1, Math.round(Number(currentCents) * (1 + pct))));
+      await prisma.marketPrice.upsert({
+        where: { symbol_date: { symbol, date: cursor } },
+        update: { closePriceCents: newCents, isStale: false, source: 'simulated' },
+        create: { symbol, date: cursor, closePriceCents: newCents, isStale: false, source: 'simulated' },
+      });
+    }
+    const data = await calculateAccountValuation(accountId, cursor);
+    await storeValuation(accountId, cursor, data);
+    const updated = await updateValuationWithTWR(accountId, cursor);
+    chart.push({
+      date: cursor.toISOString().slice(0, 10),
+      valueCents: Number(data.totalValueCents),
+      valueUSD: usd(data.totalValueCents),
+      twrPct: updated?.twrPct?.toString() ?? '0',
+    });
+  }
+
+  res.json({ days: chart.length, chart });
 });
 
 export default testRouter;
