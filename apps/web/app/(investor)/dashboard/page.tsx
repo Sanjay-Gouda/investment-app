@@ -43,8 +43,17 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    apiClient.get('/portfolio/my').then(({ data }) => setData(data)).catch(() => {});
-    apiClient.get('/plaid/balance').then(({ data }) => setPendingCents(data.pendingDepositsCents)).catch(() => {});
+    // Degrade gracefully: on any API failure, render empty state (never hang).
+    apiClient
+      .get('/portfolio/my')
+      .then(({ data }) => setData(data))
+      .catch(() =>
+        setData({ portfolioType: null, positions: [], cashBalanceCents: '0', totalValueCents: '0', orders: [] }),
+      );
+    apiClient
+      .get('/plaid/balance')
+      .then(({ data }) => setPendingCents(data.pendingDepositsCents))
+      .catch(() => setPendingCents('0'));
   }, [isAuthenticated]);
 
   if (loading || !data) return <Centered>Loading…</Centered>;
